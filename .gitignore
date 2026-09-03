@@ -1,0 +1,4 @@
+/target
+.env
+.progress
+.DS_Store

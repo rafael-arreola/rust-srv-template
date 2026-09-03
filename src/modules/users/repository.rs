@@ -1,0 +1,148 @@
+use futures::stream::TryStreamExt;
+use mongodb::{
+    Collection, Database, IndexModel,
+    bson::{doc, oid::ObjectId},
+    options::IndexOptions,
+};
+
+use super::model::UserModel;
+use crate::core::error::{AppError, AppResult};
+
+#[derive(Clone)]
+pub struct UserRepository {
+    collection: Collection<UserModel>,
+}
+
+impl UserRepository {
+    pub async fn new(db: &Database) -> AppResult<Self> {
+        let repo = Self { collection: db.collection::<UserModel>("users") };
+        repo.create_indexes().await?;
+        Ok(repo)
+    }
+
+    async fn create_indexes(&self) -> AppResult<()> {
+        let indexes = vec![
+            IndexModel::builder()
+                .keys(doc! { "email": 1 })
+                .options(
+                    IndexOptions::builder()
+                        .unique(true)
+                        .name("users_email_unique_idx".to_string())
+                        .build(),
+                )
+                .build(),
+            IndexModel::builder()
+                .keys(doc! { "deleted_at": 1, "created_at": -1 })
+                .options(
+                    IndexOptions::builder().name("users_deleted_created_idx".to_string()).build(),
+                )
+                .build(),
+        ];
+
+        self.collection
+            .create_indexes(indexes)
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        tracing::info!("✓ Users collection indexes verified");
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn create(&self, mut user: UserModel) -> AppResult<UserModel> {
+        let result = self
+            .collection
+            .insert_one(&user)
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        user.id = result.inserted_id.as_object_id();
+        Ok(user)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn find_by_id(&self, id: &str) -> AppResult<Option<UserModel>> {
+        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+
+        let user = self
+            .collection
+            .find_one(doc! { "_id": oid, "deleted_at": { "$exists": false } })
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        Ok(user)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn find_by_email(&self, email: &str) -> AppResult<Option<UserModel>> {
+        let user = self
+            .collection
+            .find_one(doc! { "email": email, "deleted_at": { "$exists": false } })
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        Ok(user)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn find_all(&self, skip: u64, limit: i64) -> AppResult<Vec<UserModel>> {
+        let cursor = self
+            .collection
+            .find(doc! { "deleted_at": { "$exists": false } })
+            .skip(skip)
+            .limit(limit)
+            .sort(doc! { "created_at": -1 })
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        let users: Vec<UserModel> =
+            cursor.try_collect().await.map_err(|e| AppError::database(e.to_string()))?;
+
+        Ok(users)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn count(&self) -> AppResult<u64> {
+        self.collection
+            .count_documents(doc! { "deleted_at": { "$exists": false } })
+            .await
+            .map_err(|e| AppError::database(e.to_string()))
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn update(&self, id: &str, user: &UserModel) -> AppResult<bool> {
+        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+
+        let doc = mongodb::bson::serialize_to_document(user)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+
+        let result = self
+            .collection
+            .update_one(
+                doc! { "_id": oid, "deleted_at": { "$exists": false } },
+                doc! { "$set": doc },
+            )
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        Ok(result.matched_count > 0)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn delete(&self, id: &str) -> AppResult<bool> {
+        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+
+        let now = mongodb::bson::DateTime::from_chrono(chrono::Utc::now());
+
+        let result = self
+            .collection
+            .update_one(
+                doc! { "_id": oid, "deleted_at": { "$exists": false } },
+                doc! { "$set": { "deleted_at": now } },
+            )
+            .await
+            .map_err(|e| AppError::database(e.to_string()))?;
+
+        Ok(result.matched_count > 0)
+    }
+}

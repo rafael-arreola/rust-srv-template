@@ -1,0 +1,34 @@
+use redis::aio::MultiplexedConnection;
+
+#[derive(Clone)]
+pub struct RedisProvider {
+    connection: MultiplexedConnection,
+    prefix: String,
+}
+
+impl std::fmt::Debug for RedisProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisProvider").field("prefix", &self.prefix).finish()
+    }
+}
+
+impl RedisProvider {
+    pub async fn new(url: &str, prefix: &str) -> Result<Self, redis::RedisError> {
+        let client = redis::Client::open(url)?;
+        let mut conn = client.get_multiplexed_async_connection().await?;
+
+        redis::cmd("PING").query_async::<()>(&mut conn).await?;
+
+        tracing::info!("Connected to Redis: {}", prefix);
+
+        Ok(RedisProvider { connection: conn, prefix: prefix.to_string() })
+    }
+
+    pub fn connection(&self) -> MultiplexedConnection {
+        self.connection.clone()
+    }
+
+    pub fn key(&self, parts: &[&str]) -> String {
+        format!("{}:{}", self.prefix, parts.join(":"))
+    }
+}
