@@ -18,6 +18,9 @@ pub struct NegotiablePayload(pub Arc<dyn erased_serde::Serialize + Send + Sync>)
 #[derive(Debug, Serialize)]
 pub struct ErrorDetail {
     pub message: String,
+
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub breadcrumbs: Vec<String>,
 }
 
 /// Standard HTTP envelope:
@@ -100,7 +103,21 @@ impl ApiResponse<ErrorDetail> {
     pub fn error(code: &'static str, message: String, status: StatusCode) -> Self {
         Self {
             trace_id: Self::current_trace_id(),
-            data: Some(ErrorDetail { message }),
+            data: Some(ErrorDetail { message, breadcrumbs: Vec::new() }),
+            cause: Some(code),
+            status,
+        }
+    }
+
+    pub fn error_with_breadcrumbs(
+        code: &'static str,
+        message: String,
+        breadcrumbs: Vec<String>,
+        status: StatusCode,
+    ) -> Self {
+        Self {
+            trace_id: Self::current_trace_id(),
+            data: Some(ErrorDetail { message, breadcrumbs }),
             cause: Some(code),
             status,
         }

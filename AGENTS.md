@@ -9,6 +9,14 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 
 ---
 
+## 0. Identidad y Filosofía de Operación
+- **Mentalidad y Tono:** Opero con pensamiento crítico, máxima precisión técnica y convicción de directiva propia en primera persona. Comunicación directa, técnica y libre de complacencia o adulación.
+- **Foco Exclusivo:** Analizar, revisar, sugerir, corregir, mejorar, cuestionar y planear.
+- **Arquitectura Anti-Hobbling:** Toda la operación se rige bajo tres pilares fundamentales: **Definición del Sistema y Arquitectura** (El "Qué"), **Guardrails Infranqueables** (Límites de Contención) y **Criterios de Término Verificables** (Definition of Done), impulsados por un **bucle autónomo de auto-verificación empírica**.
+- **Pensamiento Crítico y Disenso Constructivo:** Cuestiono activamente cualquier solicitud, premisa o diseño que introduzca antipatrones, fallos arquitectónicos o deuda técnica. Ante cualquier bifurcación de diseño o disenso, presento al menos dos alternativas estructuradas con sus respectivos trade-offs (complejidad, mantenibilidad, rendimiento y riesgo).
+
+---
+
 ## Pilar 1: Definición del Sistema y Arquitectura (El "Qué")
 
 ### 1.1 Propósito y Stack del Repositorio
@@ -54,8 +62,9 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
         ├── mod.rs          # Orquestación e instanciación topológica de módulos (Modules::init)
         ├── router.rs       # Ensamblado composable de rutas HTTP en funciones pequeñas
         ├── health/         # Probes /healthz y /readyz con verificación de drenado
-        ├── users/          # Módulo canónico CRUD (dto, model, repository, service, controller, mod)
-        └── orders/         # Módulo dependiente (ilustra consumo inter-módulo de users)
+        ├── users/          # Módulo canónico CRUD base (dto, model, repository, service, controller, mod)
+        ├── orders/         # Módulo dependiente (ilustra consumo inter-módulo unidireccional de users)
+        └── checkout/       # Módulo orquestador/complementario (coordina orders + users sin ciclos)
 ```
 
 ### 1.3 Contratos Arquitectónicos Esenciales
@@ -95,15 +104,25 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
      {
        "trace_id": "018f3a5b6c7d8e9f...",
        "data": {
-         "message": "User not found: 64f1a2..."
+         "message": "User not found: 64f1a2...",
+         "breadcrumbs": [
+           "User not found: 64f1a2...",
+           "Fallo en la verificación de cliente",
+           "Fallo en el proceso de checkout"
+         ]
        },
        "cause": "NOT_FOUND"
      }
      ```
-     Se genera retornando `Err(AppError::...)`. El método `IntoResponse` del enum formatea el envelope y oculta los detalles de infraestructura interna.
+     `breadcrumbs` en `data` es opcional: solo se incluye cuando se han apilado contextos públicos usando `.attach_public(...)`. Si no se apilan, `breadcrumbs` se omite y se mantiene el formato minimalista original. Se genera retornando `Err(AppError::...)`. El método `IntoResponse` formatea el envelope y oculta los detalles de infraestructura interna.
 5. **Validación en Fronteras:** La validación sintáctica de peticiones se delega a `ValidatedBody<T>` en los DTOs. La validación semántica se realiza en los servicios de negocio.
 6. **Observabilidad Unificada:** Todo endpoint y caso de uso debe ser trazable de extremo a extremo. El `trace_id` de OpenTelemetry generado en el middleware debe correlacionar la petición HTTP entrante, las queries de MongoDB y el envelope final de respuesta.
 7. **Integraciones con Servicios Externos (Vendors):** Los clientes que se comunican con APIs de terceros, pasarelas o servicios en la nube residen en `src/vendors/<nombre>/`. Encapsulan sus propios DTOs externos y mapean fallos a `AppError::external_service`. Se inyectan en los servicios de negocio mediante `Arc<VendorClient>`. Si un vendor es estrictamente exclusivo de un solo módulo, puede encapsularse dentro de la carpeta de ese módulo.
+8. **Topología de Módulos y Grafo Acíclico Dirigido (DAG):**
+   Toda relación inter-módulo debe formar estrictamente un Grafo Acíclico Dirigido resuelto deterministamente en `Modules::init(&ctx)`:
+   - **Módulos Canónicos Base:** Autocontenidos, no dependen de otros módulos de negocio (ej. `users`, `health`).
+   - **Módulos Dependientes Unidireccionales:** Dependen estrictamente en una sola dirección de uno o varios módulos base vía inyección de `Arc<OtherService>` en su constructor (ej. `orders` consume `users`).
+   - **Módulos Orquestadores / Complementarios (Composite Slices):** Se crean para encapsular y coordinar flujos de negocio que involucran dos o más módulos independientes (ej. `checkout` coordina `orders` y `users`), evitando que los módulos base se conozcan o se acoplen entre sí.
 
 ---
 
@@ -119,11 +138,22 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **PROHIBIDO** exportar o compartir modelos de base de datos BSON (`*Model`) entre módulos distintos. `UserModel` (con sus `ObjectId`, campos BSON y `deleted_at`) es un detalle de implementación privado de `modules/users/`.
 - La comunicación entre módulos se realiza exclusivamente invocando el **Servicio** del otro módulo (`Arc<OtherService>`), el cual intercambia únicamente contratos públicos de salida (**DTOs** como `UserOutput`).
 
-### 3. Límite de Dependencias Cíclicas
-- **PROHIBIDO** crear dependencias circulares entre módulos (`Módulo A` $\leftrightarrow$ `Módulo B`).
-- Si dos módulos requieren interacción mutua, el ciclo **debe romperse** mediante:
-  - Comunicación asíncrona por eventos internos (`tokio::sync::broadcast` o `mpsc`).
-  - Un servicio orquestador superior (por ejemplo, en un módulo coordinador o en `app.rs`).
+### 3. Límite de Dependencias Cíclicas y Grafo Acíclico de Módulos (DAG)
+- **PROHIBIDO** crear dependencias circulares directas o indirectas entre módulos (`Módulo A` $\leftrightarrow$ `Módulo B`, o `A` $\rightarrow$ `B` $\rightarrow$ `C` $\rightarrow$ `A`).
+- **PROHIBIDO** el antipatrón de inyección diferida mutable (`Arc<RwLock<Option<Arc<T>>>>`, `OnceCell` o inicializaciones en dos fases con mutación post-construcción) para ocultar o puentear ciclos de dependencias. Toda inyección debe ser inmutable y provista en el constructor `new()`.
+- **Estrategias Mandatarias para Resolver Acoplamiento Inter-Módulo:**
+  Ante cualquier interacción requerida entre dos dominios, se debe evaluar y aplicar estrictamente una de las siguientes tres estrategias en función de la semántica de negocio:
+  1. **Módulo Orquestador / Complementario (Mediador de Caso de Uso - Estrategia Recomendada para Flujos Sincrónicos):**
+     - **Cuándo aplica:** Cuando una operación de negocio coordinada requiere sincronismo y retorno inmediato en la petición HTTP involucrando dos o más dominios (ej. un flujo de checkout que valida órdenes y descuenta saldo o actualiza perfil de usuario).
+     - **Implementación:** Se crea un módulo vertical independiente (`src/modules/<orquestador>/`) que recibe en su constructor `new()` los servicios concretos `Arc<AService>` y `Arc<BService>`.
+     - **Aislamiento Estricto:** El orquestador **SOLO** tiene autorización para invocar métodos públicos del **Servicio** y consumir **DTOs públicos de salida**. **PROHIBIDO** acceder a repositorios, colecciones de MongoDB o modelos BSON internos de los módulos que coordina.
+     - **Topología resultante:** Grafo Acíclico Dirigido (`Orquestador` $\rightarrow$ `A`, `Orquestador` $\rightarrow$ `B`). Los módulos `A` y `B` permanecen 100% desacoplados e ignoran la existencia mutua y la del orquestador.
+  2. **Comunicación Asíncrona por Eventos Internos (Desacoplamiento Temporal):**
+     - **Cuándo aplica:** Cuando la interacción es reactiva o un efecto colateral (notificaciones, auditoría, recálculo de estadísticas, invalidación de caché) donde el emisor no necesita el resultado inmediato ni condiciona su flujo a la respuesta del receptor.
+     - **Implementación:** Canales in-memory `tokio::sync::broadcast` o `mpsc` instanciados en `AppContext` o durante el arranque. El emisor publica el evento; los módulos interesados se suscriben en su inicialización. Cero importaciones de tipos entre módulos.
+  3. **Fusión de Bounded Context (Re-evaluación de Fronteras de Dominio):**
+     - **Cuándo aplica:** Si dos módulos requieren llamadas bidireccionales continuas para operaciones CRUD elementales y no pueden operar independientemente. Esto denota una falsa fragmentación del dominio (code smell).
+     - **Implementación:** Fusión de ambos conceptos en un único Vertical Slice cohesivo en lugar de añadir complejidad accidental con módulos intermediarios artificiales.
 
 ### 4. Límite de Persistencia, Concurrencia y Soft-Delete (MongoDB)
 - En entidades con borrado lógico (`deleted_at`):
@@ -143,11 +173,22 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
   - **OBLIGATORIO** usar `core::http_client::instrumented_client()` o `client_with_timeout()`, los cuales fuerzan 10s de timeout global, 3s de conexión TCP y propagación del header W3C `traceparent`.
 
 ### 6. Límite de Seguridad y Exposición de Errores
-- **PROHIBIDO** fugar información interna de infraestructura hacia el cliente en respuestas HTTP. Cadenas de conexión de base de datos, direcciones IP internas, errores de red y stack traces deben quedar confinados en los logs internos correlacionados con el `trace_id`. El cliente solo recibe `AppError::public_message()`.
+- **PROHIBIDO** fugar información interna de infraestructura o reglas privadas hacia el cliente en respuestas HTTP. Cadenas de conexión de base de datos, direcciones IP internas, errores de red, balance de cuentas, payloads crudos y stack traces deben quedar confinados en los logs internos correlacionados con el `trace_id`. El cliente solo recibe `AppError::public_message()`.
 - **PROHIBIDO** el uso de `unwrap()` y `expect()` en código de aplicación (restringido por lints de clippy). Todo error debe propagarse con `?` y mapearse a `AppError`.
-- **Doble Vista de Errores:**
-  - `Display` / `to_string()` es exclusivamente para el log interno detallado.
-  - `public_message()` es la única cadena de texto autorizada para enviarse en el payload de respuesta.
+- **Doble Vista de Errores y Modelo Dual-Payload:**
+  - `public_message()`: Es la única cadena de texto autorizada para enviarse en el payload de respuesta. Debe ser natural, amigable y censurada. Se puede sobrescribir con `.with_public(...)`.
+  - `internal_detail()` (y `Display` / `to_string()`): Es exclusivamente para el log interno estructurado. Permite registrar detalles técnicos específicos y privados mediante `.with_internal(...)` o `AppError::censored(...)`.
+  - **Acumulación de Trazas/Contexto (Breadcrumbs):** Conforme el error sube en la jerarquía (`?`), se pueden acumular capas de contexto forense mediante dos métodos complementarios (en `AppError` o en `Result<T, AppError>` vía `ContextExt`):
+    - `.attach_context("...")`: Acumula contexto técnico privado en el log del servidor (`error.breadcrumbs`), jamás expuesto al cliente.
+    - `.attach_public("...")`: Acumula contexto amigable y seguro en la respuesta HTTP (`data.breadcrumbs`), visible para el cliente.
+- **Control de Emisión y Esquema Único de Logs de Error:**
+  - **Modo Automático:** Por defecto, los errores se propagan con `?` y se registran una única vez en el choke-point de salida HTTP (`AppError::into_response`).
+  - **Modo Explícito:** Si un error se recupera, o corre en una tarea en background (`tokio::spawn`), o se desea loguear antes de un rollback, se puede invocar `err.log_now()`. Esto emite el log estructurado inmediatamente y marca el error para evitar duplicación si más adelante alcanza la salida HTTP.
+  - **Taxonomía Uniforme de Campos:** Todo error emitido (vía `log_now()` o `into_response()`) genera exactamente los mismos campos semánticos:
+    - `error.code`: Código de error canónico (`NOT_FOUND`, `BUSINESS_RULE_VIOLATION`, `INTERNAL_ERROR`, etc.).
+    - `error.message`: Mensaje público y censurado enviado al cliente.
+    - `error.breadcrumbs`: Array JSON nativo con la traza secuencial completa (índice 0: causa raíz, índices 1..N: contextos agregados en el rebote).
+    - `http.status_code`: Status HTTP numérico.
 
 ### 7. Límite de Observabilidad y Tracing
 - **OBLIGATORIO** usar `#[tracing::instrument(skip_all, fields(...))]` al instrumentar funciones. **PROHIBIDO** el uso de `#[instrument]` sin `skip_all` en métodos que reciban DTOs, entidades, conexiones o dependencias para evitar desbordamiento de memoria y serialización innecesaria con `Debug`.
@@ -168,6 +209,10 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **PROHIBIDO** colocar clientes de APIs de terceros o SDKs externos dentro de `src/core/`. `src/core/` es infraestructura técnica universal agnóstica de negocio.
 - **OBLIGATORIO** instanciar los clientes de vendors usando `core::net::instrumented_client()` o `client_with_timeout()`, garantizando timeouts obligatorios y propagación del header W3C `traceparent`.
 - **OBLIGATORIO** mapear cualquier fallo de red o respuesta HTTP no exitosa del servicio externo a `AppError::external_service("VendorName", error_detail)`.
+
+### 11. Límite de Control de Versiones (Git) y Zonas Protegidas
+- **PROHIBIDO** ejecutar `git commit`, `git push`, `git merge`, `git rebase` o cambiar de rama sin instrucción puntual y explícita del usuario.
+- **PROHIBIDO** exponer o manipular claves de API, tokens, credenciales o interactuar con bases de datos de producción. Todas las pruebas locales y verificaciones deben utilizar variables de entorno locales controladas.
 
 ---
 
@@ -210,10 +255,25 @@ grep -rn 'route("/:' src/modules --include="*.rs"
 
 # 5. Verificar que no se use TimeoutLayer de tower-http
 grep -rn "TimeoutLayer" src --include="*.rs"
+
+# 6. Auditar importaciones inter-módulo para verificar que no haya ciclos
+grep -rn "crate::modules::" src/modules --include="*.rs"
 ```
-*Salida esperada para todos los comandos: completamente vacía.*
+*Salida esperada para comandos 1 al 5: completamente vacía. Para el comando 6: grafo estrictamente acíclico y unidireccional (si el módulo X importa a Y, el módulo Y jamás debe importar a X).*
 
 ### 3.3 Protocolo ante Fallos en la Verificación
 - Si `cargo fmt --check` falla $\rightarrow$ Ejecutar `cargo fmt` y re-verificar.
 - Si `cargo clippy` detecta advertencias $\rightarrow$ Corregir el código en el origen del dato. **PROHIBIDO** silenciar advertencias con `#[allow(...)]` para esconder errores.
 - Si `cargo check` o `cargo test` fallan $\rightarrow$ Diagnosticar el traceback completo, corregir la discrepancia de tipos o la lógica de negocio y re-ejecutar la batería completa.
+
+---
+
+## 4. Estándar de Comunicación y Toma de Decisiones Técnicas
+
+- **Comunicación Técnica y Directa:** Lenguaje preciso, conciso y orientado a hechos. Cero preámbulos ceremoniales o adulación complaciente.
+- **Formato Estructurado ante Decisiones de Arquitectura o Disensos:**
+  Cuando se proponga una refactorización, un nuevo módulo o ante cualquier divergencia de diseño, se debe razonar y presentar el análisis estructurado:
+  - **Opción A (Recomendada):** [Descripción técnica] — *Ventajas:* [...] | *Trade-offs / Riesgos:* [...]
+  - **Opción B (Alternativa):** [Descripción técnica] — *Ventajas:* [...] | *Trade-offs / Riesgos:* [...]
+  - **Dictamen Técnico:** Justificación arquitectónica objetiva basada en cohesión, acoplamiento y rendimiento en Rust.
+- **Cierre con Evidencia Empírica:** Resumen conciso de cambios aplicados acompañado del resultado limpio de la batería de auto-verificación (código de salida 0).

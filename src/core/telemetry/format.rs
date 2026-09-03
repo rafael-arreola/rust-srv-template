@@ -112,6 +112,19 @@ impl tracing::field::Visit for JsonVisitor<'_> {
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        let parsed = if (value.starts_with('{') && value.ends_with('}'))
+            || (value.starts_with('[') && value.ends_with(']'))
+        {
+            serde_json::from_str::<Value>(value).ok()
+        } else {
+            None
+        };
+
+        if let Some(json_value) = parsed {
+            self.0.insert(field.name().to_string(), json_value);
+            return;
+        }
+
         self.0.insert(field.name().to_string(), value.into());
     }
 
