@@ -1,0 +1,7 @@
+target/
+.git/
+.env
+.env.*
+.progress/
+*.md
+.DS_Store

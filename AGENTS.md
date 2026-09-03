@@ -22,29 +22,40 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 
 ### 1.2 Taxonomía y Organización de Directorios
 ```text
-src/
-├── main.rs                 # Entrypoint: Inicializa crypto provider, telemetría y conexión base a BD
-├── app.rs                  # Composition Root: AppContext, orquesta dependencias y monta routers
-├── config.rs               # Carga inmutable y tipada de entorno (.env vía OnceLock, fail-fast)
+.
+├── build/
+│   ├── Dockerfile          # Multi-stage build con cargo-chef, LLD y distroless
+│   └── cloudbuild.yaml     # CI/CD en GCP Cloud Build y deploy a Cloud Run
+├── .github/workflows/
+│   └── ci.yml              # Pipeline de GitHub Actions (fmt, clippy, check, test, audit)
+├── .dockerignore           # Exclusión de artefactos y secretos del contexto Docker
+├── Cargo.toml              # Manifiesto unificado con dependencias y lints de clippy
+├── rustfmt.toml            # Reglas oficiales de formato (Rust 2024)
+├── clippy.toml             # Reglas estrictas de linter
 │
-├── core/                   # Capacidades técnicas agnósticas agrupadas por familias
-│   ├── mod.rs              # Re-exports públicos unificados y retrocompatibles
-│   ├── db/                 # Familia: Persistencia y Pools (MongoDB con helpers BSON resilientes, Redis)
-│   ├── http/               # Familia: Motor y Transporte Web (server, middleware, extractors, response, pagination, error)
-│   ├── telemetry/          # Familia: Observabilidad y Trazas (tracer GCP/local, format Cloud Logging)
-│   ├── net/                # Familia: Red Saliente Base (instrumented_client con timeouts y W3C)
-│   └── macros.rs           # as_json! para estructuración segura de logs en Cloud Logging
-│
-├── vendors/                # Adaptadores hacia Servicios Externos (APIs de terceros, SDKs, Cloud)
-│   ├── mod.rs              # Re-exports de clientes de integración
-│   └── carrier/            # Vendor canónico (client HTTP instrumentado, DTOs externos, error mapping)
-│
-└── modules/                # MÓDULOS DE DOMINIO AUTOCONTENIDOS (Vertical Slices)
-    ├── mod.rs              # Orquestación e instanciación topológica de módulos (Modules::init)
-    ├── router.rs           # Ensamblado composable de rutas HTTP en funciones pequeñas
-    ├── health/             # Probes /healthz y /readyz con verificación de drenado
-    ├── users/              # Módulo canónico CRUD (dto, model, repository, service, controller, mod)
-    └── orders/             # Módulo dependiente (ilustra consumo inter-módulo de users)
+└── src/
+    ├── main.rs             # Entrypoint: Inicializa crypto provider, telemetría y conexión base a BD
+    ├── app.rs              # Composition Root: AppContext, orquesta dependencias y monta routers
+    ├── config.rs           # Carga inmutable y tipada de entorno (.env vía OnceLock, fail-fast)
+    │
+    ├── core/               # Capacidades técnicas agnósticas agrupadas por familias
+    │   ├── mod.rs          # Re-exports públicos unificados y retrocompatibles
+    │   ├── db/             # Familia: Persistencia y Pools (MongoDB con helpers BSON resilientes, Redis)
+    │   ├── http/           # Familia: Motor y Transporte Web (server, middleware, extractors, response, pagination, error)
+    │   ├── telemetry/      # Familia: Observabilidad y Trazas (tracer GCP/local, format Cloud Logging)
+    │   ├── net/            # Familia: Red Saliente Base (instrumented_client con timeouts y W3C)
+    │   └── macros.rs       # as_json! para estructuración segura de logs en Cloud Logging
+    │
+    ├── vendors/            # Adaptadores hacia Servicios Externos (APIs de terceros, SDKs, Cloud)
+    │   ├── mod.rs          # Re-exports de clientes de integración
+    │   └── carrier/        # Vendor canónico (client HTTP instrumentado, DTOs externos, error mapping)
+    │
+    └── modules/            # MÓDULOS DE DOMINIO AUTOCONTENIDOS (Vertical Slices)
+        ├── mod.rs          # Orquestación e instanciación topológica de módulos (Modules::init)
+        ├── router.rs       # Ensamblado composable de rutas HTTP en funciones pequeñas
+        ├── health/         # Probes /healthz y /readyz con verificación de drenado
+        ├── users/          # Módulo canónico CRUD (dto, model, repository, service, controller, mod)
+        └── orders/         # Módulo dependiente (ilustra consumo inter-módulo de users)
 ```
 
 ### 1.3 Contratos Arquitectónicos Esenciales
