@@ -2,6 +2,7 @@ pub mod app;
 pub mod config;
 pub mod core;
 pub mod modules;
+pub mod vendors;
 
 use app::{AppContext, Application};
 use core::MongoProvider;

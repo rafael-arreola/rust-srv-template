@@ -2,7 +2,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-pub use crate::core::pagination::PaginationQuery;
+pub use crate::core::pagination::{Paginated, PaginatedResponse, PaginationQuery};
+
+pub type PaginatedOrders = Paginated<OrderOutput>;
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateOrderInput {

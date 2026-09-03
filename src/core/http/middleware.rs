@@ -14,8 +14,8 @@ use std::time::Duration;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::core::error::AppError;
-use crate::core::response::NegotiablePayload;
+use super::error::AppError;
+use super::response::NegotiablePayload;
 
 #[derive(Clone, Debug)]
 pub struct RequestId(pub String);

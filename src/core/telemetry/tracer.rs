@@ -1,5 +1,4 @@
-pub mod format;
-
+use super::format::CloudLoggingFormat;
 use crate::config;
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider as _;
@@ -37,7 +36,7 @@ pub async fn init_tracing() -> anyhow::Result<TracerGuard> {
     let guard = match build_gcp_tracer(service_name, project_id, service_env, version).await {
         Ok((tracer, provider)) => {
             let cloud_logging_layer = tracing_subscriber::fmt::layer()
-                .event_format(format::CloudLoggingFormat::new(project_id.clone()))
+                .event_format(CloudLoggingFormat::new(project_id.clone()))
                 .fmt_fields(tracing_subscriber::fmt::format::JsonFields::new());
 
             let subscriber = tracing_subscriber::registry()

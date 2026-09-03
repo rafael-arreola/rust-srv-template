@@ -20,7 +20,9 @@ pub struct UpdateUserInput {
     pub email: String,
 }
 
-pub use crate::core::pagination::PaginationQuery;
+pub use crate::core::pagination::{Paginated, PaginatedResponse, PaginationQuery};
+
+pub type PaginatedUsers = Paginated<UserOutput>;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserOutput {

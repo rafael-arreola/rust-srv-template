@@ -7,7 +7,7 @@ use axum::{
 use serde::de::DeserializeOwned;
 use validator::Validate;
 
-use crate::core::error::AppError;
+use super::error::AppError;
 
 /// Content-negotiating, validating body extractor.
 /// Deserializes JSON or MessagePack according to `Content-Type` and runs `validator::Validate`.

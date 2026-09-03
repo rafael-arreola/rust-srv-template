@@ -9,7 +9,7 @@ use tower_http::{
     decompression::RequestDecompressionLayer,
 };
 
-use crate::core::middleware::{msgpack_negotiation, request_timeout, trace_context};
+use super::middleware::{msgpack_negotiation, request_timeout, trace_context};
 use crate::modules::health;
 
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;

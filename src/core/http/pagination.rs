@@ -33,3 +33,27 @@ impl Default for PaginationQuery {
         Self { page: Some(1), limit: Some(20) }
     }
 }
+
+/// Contenedor genérico universal de paginación para respuestas HTTP.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Paginated<T> {
+    pub data: Vec<T>,
+    pub total: u64,
+    pub total_pages: u64,
+    pub page: u32,
+    pub limit: u32,
+}
+
+impl<T> Paginated<T> {
+    pub fn new(data: Vec<T>, total: u64, page: u32, limit: u32) -> Self {
+        let total_pages =
+            if limit > 0 && total > 0 { (total as u128).div_ceil(limit as u128) as u64 } else { 0 };
+        Self { data, total, total_pages, page, limit }
+    }
+}
+
+/// Alias canónico para la respuesta paginada.
+pub type PaginatedResponse<T> = Paginated<T>;
+
+/// Alias de compatibilidad retrocompatible.
+pub type GenericPagination<T> = Paginated<T>;

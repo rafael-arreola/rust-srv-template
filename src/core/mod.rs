@@ -1,20 +1,25 @@
 pub mod db;
-pub mod error;
-pub mod extractors;
-pub mod http_client;
-pub mod middleware;
+pub mod http;
 #[macro_use]
 pub mod macros;
-pub mod pagination;
-pub mod response;
-pub mod server;
-pub mod tracer;
+pub mod net;
+pub mod telemetry;
 
+// Backward-compatible module aliases
+pub use http::error;
+pub use http::extractors;
+pub use http::middleware;
+pub use http::pagination;
+pub use http::response;
+pub use http::server;
+pub use net::client as http_client;
+pub use telemetry::tracer;
+
+// Direct type re-exports
 pub use db::{MongoProvider, RedisProvider};
-pub use error::{AppError, AppResult};
-pub use extractors::ValidatedBody;
-pub use http_client::instrumented_client;
-pub use pagination::PaginationQuery;
-pub use response::{ApiResponse, PaginatedResponse};
-pub use server::ServerLauncher;
-pub use tracer::TracerGuard;
+pub use http::{
+    ApiResponse, AppError, AppResult, ErrorSeverity, GenericApiResponse, GenericPagination,
+    Paginated, PaginatedResponse, PaginationQuery, ServerLauncher, ValidatedBody,
+};
+pub use net::{client_with_timeout, instrumented_client};
+pub use telemetry::{TracerGuard, init_tracing};

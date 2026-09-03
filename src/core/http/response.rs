@@ -8,18 +8,12 @@ use serde::Serialize;
 use std::sync::Arc;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+pub use super::pagination::{GenericPagination, Paginated, PaginatedResponse};
+
 /// Type-erased handle to the original response value, stored in the response
 /// extensions so MessagePack negotiation can encode it once directly.
 #[derive(Clone)]
 pub struct NegotiablePayload(pub Arc<dyn erased_serde::Serialize + Send + Sync>);
-
-#[derive(Debug, Serialize)]
-pub struct PaginatedResponse<T> {
-    pub data: Vec<T>,
-    pub total: u64,
-    pub page: u32,
-    pub limit: u32,
-}
 
 #[derive(Debug, Serialize)]
 pub struct ErrorDetail {
@@ -117,9 +111,12 @@ impl<T: Serialize> ApiResponse<PaginatedResponse<T>> {
     pub fn paginated(data: Vec<T>, total: u64, page: u32, limit: u32) -> Self {
         Self {
             trace_id: Self::current_trace_id(),
-            data: Some(PaginatedResponse { data, total, page, limit }),
+            data: Some(PaginatedResponse::new(data, total, page, limit)),
             cause: None,
             status: StatusCode::OK,
         }
     }
 }
+
+/// Alias para soporte de código preexistente
+pub type GenericApiResponse<T> = ApiResponse<T>;

@@ -27,22 +27,21 @@ src/
 ├── app.rs                  # Composition Root: AppContext, orquesta dependencias y monta routers
 ├── config.rs               # Carga inmutable y tipada de entorno (.env vía OnceLock, fail-fast)
 │
-├── core/                   # Capacidades técnicas transversales compartidas (CERO lógica de negocio)
-│   ├── mod.rs              # Re-exports públicos limpios
-│   ├── db/                 # Conectores y pools (MongoDB con helpers BSON resilientes, Redis)
-│   ├── pagination.rs       # PaginationQuery universal (skip, limit, page, bounds)
-│   ├── macros.rs           # as_json! para estructuración segura de logs en Cloud Logging
-│   ├── error.rs            # AppError (códigos estables, severidad, IntoResponse público-seguro)
-│   ├── response.rs         # ApiResponse<T>, paginación y negociación MessagePack
-│   ├── tracer.rs           # OpenTelemetry (GCP Cloud Trace y fallback local estructurado)
-│   ├── tracer/format.rs    # Formateador Cloud Logging JSON
-│   ├── http_client.rs      # Cliente reqwest instrumentado con W3C traceparent y timeouts
-│   ├── extractors.rs       # ValidatedBody<T> (deserialización + validación declarativa con validator)
-│   ├── middleware.rs       # Tracing W3C/GCP, Request ID (UUIDv7) y timeout por petición
-│   └── server.rs           # ServerLauncher con graceful shutdown y drenado
+├── core/                   # Capacidades técnicas agnósticas agrupadas por familias
+│   ├── mod.rs              # Re-exports públicos unificados y retrocompatibles
+│   ├── db/                 # Familia: Persistencia y Pools (MongoDB con helpers BSON resilientes, Redis)
+│   ├── http/               # Familia: Motor y Transporte Web (server, middleware, extractors, response, pagination, error)
+│   ├── telemetry/          # Familia: Observabilidad y Trazas (tracer GCP/local, format Cloud Logging)
+│   ├── net/                # Familia: Red Saliente Base (instrumented_client con timeouts y W3C)
+│   └── macros.rs           # as_json! para estructuración segura de logs en Cloud Logging
+│
+├── vendors/                # Adaptadores hacia Servicios Externos (APIs de terceros, SDKs, Cloud)
+│   ├── mod.rs              # Re-exports de clientes de integración
+│   └── carrier/            # Vendor canónico (client HTTP instrumentado, DTOs externos, error mapping)
 │
 └── modules/                # MÓDULOS DE DOMINIO AUTOCONTENIDOS (Vertical Slices)
-    ├── mod.rs              # Ensamblado topológico de módulos en /api/v1
+    ├── mod.rs              # Orquestación e instanciación topológica de módulos (Modules::init)
+    ├── router.rs           # Ensamblado composable de rutas HTTP en funciones pequeñas
     ├── health/             # Probes /healthz y /readyz con verificación de drenado
     ├── users/              # Módulo canónico CRUD (dto, model, repository, service, controller, mod)
     └── orders/             # Módulo dependiente (ilustra consumo inter-módulo de users)
@@ -50,11 +49,50 @@ src/
 
 ### 1.3 Contratos Arquitectónicos Esenciales
 1. **Vertical Slices Cohesivos:** Cada dominio (`users`, `orders`, etc.) centraliza todos sus componentes en su propia carpeta: DTOs (`dto.rs`), persistencia BSON (`model.rs`), queries e índices (`repository.rs`), reglas de negocio (`service.rs`), handlers HTTP (`controller.rs`) y exportador del módulo (`mod.rs`).
-2. **Aislamiento de Estado en Axum:** Cada módulo encapsula su propio estado (`Router::with_state(service)`). Al montarse en el router principal (`modules/mod.rs`), su tipo de estado se borra a `Router<()>`. No existe un `AppState` global monolítico.
+2. **Aislamiento de Estado y Separación de Enrutamiento:** Cada módulo encapsula su propio estado (`Router::with_state(service)`). La instanciación y resolución topológica del grafo de dependencias reside en `modules/mod.rs` mediante `Modules::init(ctx)`. La definición jerárquica de endpoints, prefijos y sub-routers reside en `modules/router.rs` estructurada en funciones puras y composables (`users_routes`, `orders_routes`). Al montarse en el router principal, el estado se borra a `Router<()>`. No existe un `AppState` global monolítico.
 3. **Inyección por Constructor:** Las dependencias se inyectan explícitamente en `new()` mediante referencias `Arc<T>`.
-4. **Envelope Uniforme:** Toda respuesta HTTP (éxito o error) debe cumplir con la estructura `{ trace_id, data, cause }`.
+4. **Envelope Uniforme y Formatos Canónicos de Respuesta:**
+   Toda respuesta de la API responde a uno de los siguientes 4 patrones estandarizados mediante `ApiResponse<T>`:
+   - **Éxito Individual (`ApiResponse::ok(data)` o `ApiResponse::created(data)`):**
+     Payload con status 200/201:
+     ```json
+     {
+       "trace_id": "018f3a5b6c7d8e9f...",
+       "data": { "id": "...", "name": "..." }
+     }
+     ```
+   - **Éxito Colección Paginada (`ApiResponse::paginated(items, total, page, limit)` o `ApiResponse::ok(paginated)`):**
+     Para endpoints de consulta de listados (`GET /api/v1/...`). Retorna el tipo `Paginated<T>` (alias `PaginatedResponse<T>`):
+     ```json
+     {
+       "trace_id": "018f3a5b6c7d8e9f...",
+       "data": {
+         "data": [ { ... }, { ... } ],
+         "total": 100,
+         "total_pages": 5,
+         "page": 1,
+         "limit": 20
+       }
+     }
+     ```
+     `total_pages` se computa automáticamente con `(total).div_ceil(limit)`. Los handlers de listado reciben `Query(query): Query<PaginationQuery>` y extraen `query.page()` y `query.limit()`.
+   - **Respuesta Sin Contenido (`ApiResponse::empty()`):**
+     Status HTTP 204 No Content, sin cuerpo serializado.
+   - **Error Controlado (`AppError`):**
+     Status HTTP correspondiente (400, 404, 409, 422, 500, etc.):
+     ```json
+     {
+       "trace_id": "018f3a5b6c7d8e9f...",
+       "data": {
+         "message": "User not found: 64f1a2..."
+       },
+       "cause": "NOT_FOUND"
+     }
+     ```
+     Se genera retornando `Err(AppError::...)`. El método `IntoResponse` del enum formatea el envelope y oculta los detalles de infraestructura interna.
 5. **Validación en Fronteras:** La validación sintáctica de peticiones se delega a `ValidatedBody<T>` en los DTOs. La validación semántica se realiza en los servicios de negocio.
 6. **Observabilidad Unificada:** Todo endpoint y caso de uso debe ser trazable de extremo a extremo. El `trace_id` de OpenTelemetry generado en el middleware debe correlacionar la petición HTTP entrante, las queries de MongoDB y el envelope final de respuesta.
+7. **Integraciones con Servicios Externos (Vendors):** Los clientes que se comunican con APIs de terceros, pasarelas o servicios en la nube residen en `src/vendors/<nombre>/`. Encapsulan sus propios DTOs externos y mapean fallos a `AppError::external_service`. Se inyectan en los servicios de negocio mediante `Arc<VendorClient>`. Si un vendor es estrictamente exclusivo de un solo módulo, puede encapsularse dentro de la carpeta de ese módulo.
 
 ---
 
@@ -115,6 +153,11 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **PROHIBIDO** inventar traits dinámicos (`Arc<dyn Trait>`) o dobles de prueba sintéticos (mocks) por defecto. Usa tipos concretos `Arc<T>` a menos que exista una necesidad técnica real e ineludible de polimorfismo dinámico en runtime.
 - **PROHIBIDO** crear archivos de prueba o tests sintéticos no solicitados expresamente por el usuario.
 
+### 10. Límite de Integraciones Externas (Vendors)
+- **PROHIBIDO** colocar clientes de APIs de terceros o SDKs externos dentro de `src/core/`. `src/core/` es infraestructura técnica universal agnóstica de negocio.
+- **OBLIGATORIO** instanciar los clientes de vendors usando `core::net::instrumented_client()` o `client_with_timeout()`, garantizando timeouts obligatorios y propagación del header W3C `traceparent`.
+- **OBLIGATORIO** mapear cualquier fallo de red o respuesta HTTP no exitosa del servicio externo a `AppError::external_service("VendorName", error_detail)`.
+
 ---
 
 ## Pilar 3: Criterios de Término Verificables (Definition of Done)
@@ -149,7 +192,7 @@ cargo clippy --all-targets -- -D warnings 2>&1 | grep -i "unwrap\|expect"
 grep -rn "delete_one\|delete_many\|find_one_and_delete" src/modules --include="*.rs"
 
 # 3. Verificar que no haya clientes HTTP reqwest sin instrumentar
-grep -rn "reqwest::Client::new\|reqwest::ClientBuilder" src --include="*.rs" | grep -v "core/http_client.rs"
+grep -rn "reqwest::Client::new\|reqwest::ClientBuilder" src --include="*.rs" | grep -v "core/net/client.rs"
 
 # 4. Verificar que no haya sintaxis de ruta errónea en Axum (:id)
 grep -rn 'route("/:' src/modules --include="*.rs"
