@@ -1,95 +1,116 @@
-# Template Backend Modular — Rust
+# Template Backend Modular en Rust
 
-Plantilla de arquitectura backend de alto rendimiento en Rust (Axum 0.8, MongoDB 3.8, Tokio 1, OpenTelemetry) diseñada bajo el patrón **Vertical Slice / Modular Monolith (estilo NestJS)**.
-
-Centraliza cada dominio de negocio y todos sus componentes en una única carpeta modular (`src/modules/<dominio>/`), eliminando la sobrecomplejidad de capas horizontales dispersas y el acoplamiento de estado.
+Plantilla de arquitectura backend de alto rendimiento diseñada bajo el patrón **Vertical Slice / Monolito Modular**. Organiza el código en módulos de negocio independientes, desacoplados y fácilmente escalables.
 
 ---
 
-## Características Principales
+## ¿Cómo Funciona esta Arquitectura? (Explicación Sencilla)
 
-- **Arquitectura Modular Vertical:** Cada dominio (`users`, `orders`, etc.) agrupa sus DTOs, modelos de persistencia, repositorios, servicios y controladores HTTP.
-- **Aislamiento de Estado en Axum:** Cada módulo gestiona su propio estado (`Router::with_state(service)`), borrando el tipo de estado a `Router<()>` al integrarse en la aplicación. Cero macros `impl_from_ref!` y cero `AppState` monolítico.
-- **Inyección por Constructor:** Dependencias explícitas en `new()` validadas en tiempo de compilación.
-- **Observabilidad de Producción:** OpenTelemetry con exportador a Google Cloud Trace y fallback local a logs estructurados en JSON (`CloudLoggingFormat`). Propagación de trazas W3C `traceparent` y correlación de `trace_id` en todas las respuestas.
-- **Manejo Uniforme de Errores:** Envelope estándar `{ trace_id, data, cause }`. Choke point único de logging según severidad (`Info`, `Warn`, `Error`). Mensajes públicos seguros para el cliente que ocultan detalles internos.
-- **Validación Automática:** Extractor `ValidatedBody<T>` que combina negociación de contenido (JSON y MessagePack) con validación declarativa mediante `validator`.
-- **Soft-Delete Universal:** Manejo nativo de borrado lógico con índices idempotentes en MongoDB.
-- **Graceful Shutdown & Drenado:** Soporte para probes `/healthz` (liveness) y `/readyz` (readiness) con flag de drenado antes del cierre del listener.
+Para entender cómo está diseñado este sistema sin necesidad de conocimientos técnicos profundos, imagina que el software funciona exactamente como una **empresa moderna con departamentos especializados**:
+
+```text
+               CLIENTE / APLICACIÓN EXTERNA
+                           │
+             ┌─────────────┴─────────────┐
+             ▼                           ▼
+     [ Trámite Simple ]          [ Trámite Complejo ]
+             │                           │
+             ▼                           ▼
+  ┌─────────────────────┐     ┌────────────────────────┐
+  │  DEPARTAMENTO BASE  │     │  MÓDULO COORDINADOR    │
+  │     (ej. Users)     │     │     (ej. Checkout)     │
+  │                     │     │                        │
+  │  • Ventanilla       │     │  • Ventanilla          │
+  │  • Reglas internas  │     │  • Pasos coordinados   │
+  │  • Archivador       │     └───────────┬────────────┘
+  └─────────────────────┘                 │
+                               ┌──────────┴──────────┐
+                               ▼                     ▼
+                    ┌──────────────────┐  ┌──────────────────┐
+                    │  DEPTO. USUARIOS │  │  DEPTO. ÓRDENES  │
+                    └──────────────────┘  └──────────────────┘
+```
+
+### 1. Los Departamentos Base (Módulos Base)
+Son las áreas fundamentales del negocio (por ejemplo, **Usuarios** y **Órdenes**):
+- Cada uno es un especialista en su tema: el área de usuarios solo sabe de perfiles y correos; el área de órdenes solo sabe de carritos y compras.
+- Cada departamento tiene su propio **archivador privado** (base de datos). Nadie de afuera puede abrir sus cajones ni alterar sus expedientes.
+- **Regla de oro:** Los departamentos base no dependen unos de otros. Son autónomos y autosuficientes.
+
+### 2. El Coordinador de Procesos (Módulos Orquestadores)
+En el mundo real, muchas actividades requieren la participación de más de un departamento. Por ejemplo: **hacer una compra (Checkout)**:
+- En lugar de que el área de órdenes intente meterse en el área de usuarios (lo que causaría caos, enredos de cables y confusiones), existe un **Coordinador** especializado (el módulo `checkout`).
+- El cliente acude a la ventanilla del Coordinador.
+- El Coordinador le pregunta formalmente al área de Usuarios: *"¿Este cliente existe y está al corriente?"*.
+- Una vez verificado, el Coordinador le solicita al área de Órdenes: *"Por favor, genera esta orden para este cliente"*.
+- El Coordinador consolida la información y le entrega al cliente su recibo final.
+- **El gran beneficio:** Si el día de mañana cambia la forma de cobrar o de validar, los departamentos base no sufren modificaciones. Todo queda limpio y sin dependencias cruzadas.
+
+### 3. Flexibilidad Interna: No Todos los Módulos son Iguales
+Un error frecuente en el software es obligar a que todas las carpetas tengan exactamente los mismos archivos y carpetas internas. En esta arquitectura la estructura se adapta a la necesidad:
+- **Módulo con Datos Propios (Stateful):** Tiene ventanilla de atención (`controller`), reglas del área (`service`), archivador (`repository`), formato de expedientes (`model`) y solicitudes (`dto`). *Ejemplo: Usuarios y Órdenes.*
+- **Módulo Coordinador (Composite/Workflow):** No necesita archivador propio porque no guarda expedientes nuevos; solo necesita su ventanilla (`controller`), su guía de coordinación (`workflow`) y sus formatos (`dto`). *Ejemplo: Checkout.*
+- **Módulo de Servicio Rápido (Lean):** Áreas que solo responden preguntas técnicas rápidas sin expedientes ni procesos largos. *Ejemplo: Health Checks (monitoreo del estado del servidor).*
 
 ---
 
-## Estructura del Proyecto
+## Casos de Uso Explicados Paso a Paso
+
+### Caso de Uso A: Registro de un Nuevo Usuario (Ventanilla Única)
+1. **Llegada:** El cliente envía sus datos (nombre y correo) a la ventanilla de Usuarios.
+2. **Revisión:** El sistema revisa que el formulario esté bien llenado y no falten datos.
+3. **Validación:** El servicio interno verifica que no exista ya otro usuario con ese mismo correo.
+4. **Archivo:** Guarda el nuevo registro en su base de datos privada.
+5. **Respuesta:** Devuelve un mensaje de confirmación con el identificador del usuario creado.
+
+### Caso de Uso B: Proceso de Checkout (Flujo Multi-Departamento)
+1. **Llegada:** El cliente solicita realizar el checkout enviando su identificador de usuario y los productos a comprar.
+2. **Paso 1 (Identidad):** El Coordinador de Checkout contacta al servicio de Usuarios para confirmar que el cliente exista.
+   - *Si no existe:* Detiene el proceso inmediatamente y devuelve un mensaje claro: *"No fue posible validar la cuenta de usuario para el checkout"*.
+3. **Paso 2 (Orden):** Si el cliente es válido, el Coordinador solicita al servicio de Órdenes registrar los productos, calcular subtotales y generar el número de pedido.
+4. **Paso 3 (Consolidación):** El Coordinador recopila los datos de ambas áreas (nombre y correo del usuario + detalle de la orden) y entrega una confirmación unificada al cliente.
+
+---
+
+## Mapa de Carpetas del Sistema
 
 ```text
 rust-srv-template/
-├── Cargo.toml                      # Manifiesto unificado
-├── clippy.toml                     # Reglas estrictas de clippy
-├── rustfmt.toml                    # Formateo oficial de Rust 2024
-├── .env.example                    # Plantilla de variables de entorno
-├── AGENTS.md                       # Directiva operativa para desarrolladores e IA
+├── Cargo.toml                  # Configuración general del proyecto en Rust
+├── AGENTS.md                   # Directiva técnica detallada para desarrolladores y agentes IA
 │
 └── src/
-    ├── main.rs                     # Entrypoint del servicio
-    ├── app.rs                      # Composition Root y servidor HTTP
-    ├── config.rs                   # Configuración y variables de entorno
+    ├── main.rs                 # Encendido y arranque del servidor
+    ├── app.rs                  # Ensamblado inicial de los componentes
+    ├── config.rs               # Carga de variables de entorno y puertos
     │
-    ├── core/                       # Infraestructura transversal (cero lógica de negocio)
-    │   ├── db/                     # Conectores MongoDB y Redis
-    │   ├── error.rs                # AppError y códigos semánticos
-    │   ├── response.rs             # ApiResponse, paginación y MessagePack
-    │   ├── tracer.rs               # Setup de OpenTelemetry y tracing
-    │   ├── tracer/format.rs        # Formateador Cloud Logging
-    │   ├── http_client.rs          # Cliente HTTP instrumentado con timeouts
-    │   ├── extractors.rs           # ValidatedBody<T>
-    │   ├── middleware.rs           # Trace context, Request ID y timeout
-    │   └── server.rs               # ServerLauncher con graceful shutdown
+    ├── core/                   # Herramientas técnicas generales (base de datos, logs, seguridad)
     │
-    └── modules/                    # DOMINIOS DE NEGOCIO AUTOCONTENIDOS
-        ├── mod.rs                  # Ensamblado de rutas en /api/v1
-        ├── health/                 # Health checks (/healthz y /readyz)
-        ├── users/                  # Módulo de usuarios (CRUD canónico)
-        │   ├── dto.rs              # DTOs validados
-        │   ├── model.rs            # Modelo BSON / Mongo
-        │   ├── repository.rs       # Consultas e índices
-        │   ├── service.rs          # Reglas de negocio
-        │   ├── controller.rs       # Handlers HTTP de Axum
-        │   └── mod.rs              # UsersModule y router
-        └── orders/                 # Módulo con inyección inter-módulo (depende de users)
+    └── modules/                # Módulos de Negocio
+        ├── health/             # Monitor de salud del servicio (Arquetipo Lean)
+        ├── users/              # Gestión de usuarios y cuentas (Arquetipo Base CRUD)
+        ├── orders/             # Gestión de órdenes y pedidos (Arquetipo Base CRUD)
+        └── checkout/           # Orquestador del proceso de compra (Arquetipo Workflow)
 ```
 
 ---
 
-## Inicio Rápido
+## Guía Rápida de Ejecución
 
 ### 1. Variables de Entorno
-Copia el archivo de ejemplo:
 ```bash
 cp .env.example .env
 ```
 
-### 2. Ejecutar en Desarrollo
+### 2. Iniciar el Servidor en Desarrollo
 ```bash
 cargo run
 ```
 
-### 3. Verificar Calidad y Formato
+### 3. Verificar que Todo esté en Orden
 ```bash
-cargo fmt --check
-cargo clippy -- -D warnings
 cargo check
 cargo test
+cargo clippy -- -D warnings
+cargo fmt --check
 ```
-
----
-
-## Cómo Crear un Nuevo Módulo
-
-1. Crea la carpeta en `src/modules/<nuevo_dominio>/`.
-2. Define los contratos en `dto.rs` con anotaciones `#[validate(...)]`.
-3. Define la estructura de persistencia en `model.rs`.
-4. Implementa las operaciones en `repository.rs` con creación idempotente de índices.
-5. Implementa la lógica en `service.rs`.
-6. Define las rutas en `controller.rs` usando `State(Arc<Service>)` y `ValidatedBody`.
-7. Expón el constructor y router en `mod.rs`.
-8. Regístralo en `src/modules/mod.rs` montándolo en el router de la API.

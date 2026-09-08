@@ -61,14 +61,32 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
     └── modules/            # MÓDULOS DE DOMINIO AUTOCONTENIDOS (Vertical Slices)
         ├── mod.rs          # Orquestación e instanciación topológica de módulos (Modules::init)
         ├── router.rs       # Ensamblado composable de rutas HTTP en funciones pequeñas
-        ├── health/         # Probes /healthz y /readyz con verificación de drenado
-        ├── users/          # Módulo canónico CRUD base (dto, model, repository, service, controller, mod)
-        ├── orders/         # Módulo dependiente (ilustra consumo inter-módulo unidireccional de users)
-        └── checkout/       # Módulo orquestador/complementario (coordina orders + users sin ciclos)
+        ├── health/         # Arquetipo Lean: probes /healthz y /readyz (controller, mod)
+        ├── users/          # Arquetipo Stateful CRUD: entidad persistente (dto, model, repo, service, controller, mod)
+        ├── orders/         # Arquetipo Stateful CRUD: entidad persistente (dto, model, repo, service, controller, mod)
+        └── checkout/       # Arquetipo Composite: orquestador multi-módulo (dto, workflow, controller, mod)
 ```
 
 ### 1.3 Contratos Arquitectónicos Esenciales
-1. **Vertical Slices Cohesivos:** Cada dominio (`users`, `orders`, etc.) centraliza todos sus componentes en su propia carpeta: DTOs (`dto.rs`), persistencia BSON (`model.rs`), queries e índices (`repository.rs`), reglas de negocio (`service.rs`), handlers HTTP (`controller.rs`) y exportador del módulo (`mod.rs`).
+1. **Vertical Slices Cohesivos y Arquetipos Modulares Flexibles:**
+   Un módulo centraliza todos sus componentes en su propia carpeta bajo `src/modules/<modulo>/`. **La estructura interna NO es fija de 6 archivos**, sino que se adapta estrictamente a uno de los siguientes **4 Arquetipos de Módulo**:
+   - **Arquetipo 1: Stateful Domain Slice (CRUD Completo / Persistente):**
+     Para entidades con colección propia en base de datos.
+     *Archivos:* `mod.rs`, `controller.rs` (o `routes.rs`), `service.rs`, `repository.rs`, `model.rs`, `dto.rs` (ej. `users`, `orders`).
+   - **Arquetipo 2: Composite / Workflow Slice (Orquestador Multi-Dominio):**
+     Para flujos de negocio o casos de uso coordinados entre dos o más módulos base.
+     *Archivos:* `mod.rs`, `controller.rs`, `workflow.rs` (o `service.rs`), `dto.rs` (ej. `checkout`).
+     *Regla estricta:* **PROHIBIDO** incluir `model.rs` o `repository.rs`; la persistencia se delega a través de los servicios base inyectados.
+   - **Arquetipo 3: Lean / Gateway Slice (Transporte / Utilitario):**
+     Para endpoints técnicos, webhooks o probes sin reglas de dominio complejas ni base de datos propia.
+     *Archivos:* `mod.rs`, `controller.rs` (o `handlers.rs`) (ej. `health`).
+   - **Arquetipo 4: Worker / Consumer Slice (Procesamiento Asíncrono):**
+     Para tareas en background, cron jobs o listeners de canales internos (`tokio::sync::broadcast`) sin exposición HTTP.
+     *Archivos:* `mod.rs`, `consumer.rs` (o `worker.rs`), `service.rs`, `dto.rs`.
+   - **Guía de Nomenclatura Semántica:**
+     - `controller.rs` vs `handlers.rs` / `routes.rs`: Usar `routes.rs` o `handlers.rs` cuando el módulo es ligero o estilo puramente funcional.
+     - `service.rs` vs `workflow.rs` / `usecase.rs`: Usar `workflow.rs` o `usecase.rs` en módulos orquestadores/compuestos para denotar un proceso coordinado multi-paso.
+     - `dto.rs` vs `contract.rs`: Usar `contract.rs` cuando define acuerdos estables de intercambio inter-módulo.
 2. **Aislamiento de Estado y Separación de Enrutamiento:** Cada módulo encapsula su propio estado (`Router::with_state(service)`). La instanciación y resolución topológica del grafo de dependencias reside en `modules/mod.rs` mediante `Modules::init(ctx)`. La definición jerárquica de endpoints, prefijos y sub-routers reside en `modules/router.rs` estructurada en funciones puras y composables (`users_routes`, `orders_routes`). Al montarse en el router principal, el estado se borra a `Router<()>`. No existe un `AppState` global monolítico.
 3. **Inyección por Constructor:** Las dependencias se inyectan explícitamente en `new()` mediante referencias `Arc<T>`.
 4. **Envelope Uniforme y Formatos Canónicos de Respuesta:**
@@ -120,9 +138,9 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 7. **Integraciones con Servicios Externos (Vendors):** Los clientes que se comunican con APIs de terceros, pasarelas o servicios en la nube residen en `src/vendors/<nombre>/`. Encapsulan sus propios DTOs externos y mapean fallos a `AppError::external_service`. Se inyectan en los servicios de negocio mediante `Arc<VendorClient>`. Si un vendor es estrictamente exclusivo de un solo módulo, puede encapsularse dentro de la carpeta de ese módulo.
 8. **Topología de Módulos y Grafo Acíclico Dirigido (DAG):**
    Toda relación inter-módulo debe formar estrictamente un Grafo Acíclico Dirigido resuelto deterministamente en `Modules::init(&ctx)`:
-   - **Módulos Canónicos Base:** Autocontenidos, no dependen de otros módulos de negocio (ej. `users`, `health`).
-   - **Módulos Dependientes Unidireccionales:** Dependen estrictamente en una sola dirección de uno o varios módulos base vía inyección de `Arc<OtherService>` en su constructor (ej. `orders` consume `users`).
-   - **Módulos Orquestadores / Complementarios (Composite Slices):** Se crean para encapsular y coordinar flujos de negocio que involucran dos o más módulos independientes (ej. `checkout` coordina `orders` y `users`), evitando que los módulos base se conozcan o se acoplen entre sí.
+   - **Módulos Base (Leaf Slices):** Autocontenidos, encapsulan una única entidad persistente o capacidad atómica (`users`, `orders`, `health`). No dependen ni importan horizontalmente a otros módulos base.
+   - **Módulos Compuestos / Orquestadores (Composite / Workflow Slices):** Se crean para encapsular y coordinar flujos de negocio que involucran dos o más módulos independientes (`checkout` coordina `users` y `orders`). Reciben los servicios base vía inyección `Arc<T>` en su constructor.
+   - **Módulos Dependientes Unidireccionales:** Solo admisibles cuando un módulo secundario requiere una lectura directa simple de un módulo base sin justificar un orquestador completo. Jamás bidireccional.
 
 ---
 

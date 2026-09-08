@@ -11,7 +11,6 @@ use std::sync::Arc;
 use self::repository::OrderRepository;
 use self::service::OrderService;
 use crate::core::error::AppResult;
-use crate::modules::users::service::UserService;
 
 #[derive(Clone)]
 pub struct OrdersModule {
@@ -19,9 +18,9 @@ pub struct OrdersModule {
 }
 
 impl OrdersModule {
-    pub async fn new(db: &Database, user_service: Arc<UserService>) -> AppResult<Self> {
+    pub async fn new(db: &Database) -> AppResult<Self> {
         let repository = Arc::new(OrderRepository::new(db).await?);
-        let service = Arc::new(OrderService::new(repository, user_service));
+        let service = Arc::new(OrderService::new(repository));
         Ok(Self { service })
     }
 

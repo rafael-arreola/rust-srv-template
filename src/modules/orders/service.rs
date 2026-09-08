@@ -5,23 +5,20 @@ use super::dto::{CreateOrderInput, OrderOutput};
 use super::model::{OrderItemModel, OrderModel};
 use super::repository::OrderRepository;
 use crate::core::error::{AppError, AppResult};
-use crate::modules::users::service::UserService;
 
 #[derive(Clone)]
 pub struct OrderService {
     repo: Arc<OrderRepository>,
-    user_service: Arc<UserService>,
 }
 
 impl OrderService {
-    pub fn new(repo: Arc<OrderRepository>, user_service: Arc<UserService>) -> Self {
-        Self { repo, user_service }
+    pub fn new(repo: Arc<OrderRepository>) -> Self {
+        Self { repo }
     }
 
     #[tracing::instrument(skip_all, fields(user_id = %input.user_id))]
     pub async fn create_order(&self, input: CreateOrderInput) -> AppResult<OrderOutput> {
-        // Cross-module dependency call: ensure user exists and retrieve their name
-        let user = self.user_service.get_user(&input.user_id).await?;
+        let user_name = input.user_name.unwrap_or_else(|| "Customer".to_string());
 
         let mut total_amount = 0.0;
         let mut item_models = Vec::with_capacity(input.items.len());
@@ -37,8 +34,8 @@ impl OrderService {
 
         let order_model = OrderModel {
             id: None,
-            user_id: user.id,
-            user_name: user.name,
+            user_id: input.user_id,
+            user_name,
             items: item_models,
             total_amount,
             status: "CREATED".to_string(),

@@ -11,6 +11,9 @@ pub struct CreateOrderInput {
     #[validate(length(min = 1, message = "user_id is required"))]
     pub user_id: String,
 
+    #[serde(default)]
+    pub user_name: Option<String>,
+
     #[validate(length(min = 1, message = "At least one item is required"))]
     pub items: Vec<OrderItemInput>,
 }
