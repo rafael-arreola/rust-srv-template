@@ -1,8 +1,7 @@
-use chrono::Utc;
 use std::sync::Arc;
 
 use super::dto::{CreateUserInput, UpdateUserInput, UserOutput};
-use super::model::UserModel;
+use super::entity::User;
 use super::repository::UserRepository;
 use crate::core::error::{AppError, AppResult};
 
@@ -23,18 +22,9 @@ impl UserService {
             return Err(AppError::duplicate("User", "email", input.email));
         }
 
-        let now = Utc::now();
-        let user_model = UserModel {
-            id: None,
-            name: input.name,
-            email: input.email,
-            created_at: now,
-            updated_at: now,
-            deleted_at: None,
-        };
-
-        let created = self.repo.create(user_model).await?;
-        tracing::info!(user_id = ?created.id, "User created successfully");
+        let user = User::new(input.name, input.email);
+        let created = self.repo.create(&user).await?;
+        tracing::info!(user_id = %created.id, "User created successfully");
         Ok(created.into())
     }
 
@@ -68,9 +58,7 @@ impl UserService {
             }
         }
 
-        user.name = input.name;
-        user.email = input.email;
-        user.updated_at = Utc::now();
+        user.update_profile(input.name, input.email);
 
         self.repo.update(id, &user).await?;
         tracing::info!(user_id = %id, "User updated");

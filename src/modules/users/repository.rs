@@ -5,17 +5,18 @@ use mongodb::{
     options::IndexOptions,
 };
 
-use super::model::UserModel;
+use super::document::UserDocument;
+use super::entity::User;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
 pub struct UserRepository {
-    collection: Collection<UserModel>,
+    collection: Collection<UserDocument>,
 }
 
 impl UserRepository {
     pub async fn new(db: &Database) -> AppResult<Self> {
-        let repo = Self { collection: db.collection::<UserModel>("users") };
+        let repo = Self { collection: db.collection::<UserDocument>("users") };
         repo.create_indexes().await?;
         Ok(repo)
     }
@@ -49,19 +50,21 @@ impl UserRepository {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn create(&self, mut user: UserModel) -> AppResult<UserModel> {
+    pub async fn create(&self, user: &User) -> AppResult<User> {
+        let doc = UserDocument::from_domain(user, None);
         let result = self
             .collection
-            .insert_one(&user)
+            .insert_one(&doc)
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        user.id = result.inserted_id.as_object_id();
-        Ok(user)
+        let mut created = user.clone();
+        created.id = result.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default();
+        Ok(created)
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn find_by_id(&self, id: &str) -> AppResult<Option<UserModel>> {
+    pub async fn find_by_id(&self, id: &str) -> AppResult<Option<User>> {
         let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
 
         let user = self
@@ -70,22 +73,22 @@ impl UserRepository {
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        Ok(user)
+        Ok(user.map(UserDocument::into_domain))
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn find_by_email(&self, email: &str) -> AppResult<Option<UserModel>> {
+    pub async fn find_by_email(&self, email: &str) -> AppResult<Option<User>> {
         let user = self
             .collection
             .find_one(doc! { "email": email, "deleted_at": { "$exists": false } })
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        Ok(user)
+        Ok(user.map(UserDocument::into_domain))
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn find_all(&self, skip: u64, limit: i64) -> AppResult<Vec<UserModel>> {
+    pub async fn find_all(&self, skip: u64, limit: i64) -> AppResult<Vec<User>> {
         let cursor = self
             .collection
             .find(doc! { "deleted_at": { "$exists": false } })
@@ -95,10 +98,10 @@ impl UserRepository {
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        let users: Vec<UserModel> =
+        let docs: Vec<UserDocument> =
             cursor.try_collect().await.map_err(|e| AppError::database(e.to_string()))?;
 
-        Ok(users)
+        Ok(docs.into_iter().map(UserDocument::into_domain).collect())
     }
 
     #[tracing::instrument(skip_all)]
@@ -110,17 +113,18 @@ impl UserRepository {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn update(&self, id: &str, user: &UserModel) -> AppResult<bool> {
+    pub async fn update(&self, id: &str, user: &User) -> AppResult<bool> {
         let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
 
-        let doc = mongodb::bson::serialize_to_document(user)
+        let doc = UserDocument::from_domain(user, Some(oid));
+        let bson_doc = mongodb::bson::serialize_to_document(&doc)
             .map_err(|e| AppError::internal(e.to_string()))?;
 
         let result = self
             .collection
             .update_one(
                 doc! { "_id": oid, "deleted_at": { "$exists": false } },
-                doc! { "$set": doc },
+                doc! { "$set": bson_doc },
             )
             .await
             .map_err(|e| AppError::database(e.to_string()))?;

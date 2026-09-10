@@ -4,17 +4,18 @@ use mongodb::{
     options::IndexOptions,
 };
 
-use super::model::OrderModel;
+use super::document::OrderDocument;
+use super::entity::Order;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
 pub struct OrderRepository {
-    collection: Collection<OrderModel>,
+    collection: Collection<OrderDocument>,
 }
 
 impl OrderRepository {
     pub async fn new(db: &Database) -> AppResult<Self> {
-        let repo = Self { collection: db.collection::<OrderModel>("orders") };
+        let repo = Self { collection: db.collection::<OrderDocument>("orders") };
         repo.create_indexes().await?;
         Ok(repo)
     }
@@ -39,19 +40,21 @@ impl OrderRepository {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn create(&self, mut order: OrderModel) -> AppResult<OrderModel> {
+    pub async fn create(&self, order: &Order) -> AppResult<Order> {
+        let doc = OrderDocument::from_domain(order, None);
         let result = self
             .collection
-            .insert_one(&order)
+            .insert_one(&doc)
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        order.id = result.inserted_id.as_object_id();
-        Ok(order)
+        let mut created = order.clone();
+        created.id = result.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default();
+        Ok(created)
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn find_by_id(&self, id: &str) -> AppResult<Option<OrderModel>> {
+    pub async fn find_by_id(&self, id: &str) -> AppResult<Option<Order>> {
         let oid =
             ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "Order", id))?;
 
@@ -61,6 +64,6 @@ impl OrderRepository {
             .await
             .map_err(|e| AppError::database(e.to_string()))?;
 
-        Ok(order)
+        Ok(order.map(OrderDocument::into_domain))
     }
 }

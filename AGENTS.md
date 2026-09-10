@@ -62,8 +62,8 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
         ├── mod.rs          # Orquestación e instanciación topológica de módulos (Modules::init)
         ├── router.rs       # Ensamblado composable de rutas HTTP en funciones pequeñas
         ├── health/         # Arquetipo Lean: probes /healthz y /readyz (controller, mod)
-        ├── users/          # Arquetipo Stateful CRUD: entidad persistente (dto, model, repo, service, controller, mod)
-        ├── orders/         # Arquetipo Stateful CRUD: entidad persistente (dto, model, repo, service, controller, mod)
+        ├── users/          # Arquetipo Stateful CRUD: entidad persistente (dto, entity, document, repo, service, controller, mod)
+        ├── orders/         # Arquetipo Stateful CRUD: entidad persistente (dto, entity, document, repo, service, controller, mod)
         └── checkout/       # Arquetipo Composite: orquestador multi-módulo (dto, workflow, controller, mod)
 ```
 
@@ -71,12 +71,15 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 1. **Vertical Slices Cohesivos y Arquetipos Modulares Flexibles:**
    Un módulo centraliza todos sus componentes en su propia carpeta bajo `src/modules/<modulo>/`. **La estructura interna NO es fija de 6 archivos**, sino que se adapta estrictamente a uno de los siguientes **4 Arquetipos de Módulo**:
    - **Arquetipo 1: Stateful Domain Slice (CRUD Completo / Persistente):**
-     Para entidades con colección propia en base de datos.
-     *Archivos:* `mod.rs`, `controller.rs` (o `routes.rs`), `service.rs`, `repository.rs`, `model.rs`, `dto.rs` (ej. `users`, `orders`).
+     Para entidades con colección propia en base de datos. Implementa la **Tríada Canónica de Separación**:
+     - `dto.rs`: Frontera de transporte HTTP (inputs con validación sintáctica `validator` y outputs serializables).
+     - `entity.rs`: Entidad de dominio pura con reglas de negocio e invariantes. Desacoplada de MongoDB, sin anotaciones BSON ni tipos de infraestructura (`id: String`).
+     - `document.rs`: Esquema de almacenamiento BSON privado (`ObjectId`, `_id`, `deleted_at`). Implementa mappers bidireccionales (`from_domain`, `into_domain`).
+     *Archivos:* `mod.rs`, `controller.rs` (o `routes.rs`), `service.rs`, `repository.rs`, `entity.rs`, `document.rs`, `dto.rs` (ej. `users`, `orders`).
    - **Arquetipo 2: Composite / Workflow Slice (Orquestador Multi-Dominio):**
      Para flujos de negocio o casos de uso coordinados entre dos o más módulos base.
      *Archivos:* `mod.rs`, `controller.rs`, `workflow.rs` (o `service.rs`), `dto.rs` (ej. `checkout`).
-     *Regla estricta:* **PROHIBIDO** incluir `model.rs` o `repository.rs`; la persistencia se delega a través de los servicios base inyectados.
+     *Regla estricta:* **PROHIBIDO** incluir `document.rs` o `repository.rs`; la persistencia se delega a través de los servicios base inyectados.
    - **Arquetipo 3: Lean / Gateway Slice (Transporte / Utilitario):**
      Para endpoints técnicos, webhooks o probes sin reglas de dominio complejas ni base de datos propia.
      *Archivos:* `mod.rs`, `controller.rs` (o `handlers.rs`) (ej. `health`).
@@ -87,7 +90,18 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
      - `controller.rs` vs `handlers.rs` / `routes.rs`: Usar `routes.rs` o `handlers.rs` cuando el módulo es ligero o estilo puramente funcional.
      - `service.rs` vs `workflow.rs` / `usecase.rs`: Usar `workflow.rs` o `usecase.rs` en módulos orquestadores/compuestos para denotar un proceso coordinado multi-paso.
      - `dto.rs` vs `contract.rs`: Usar `contract.rs` cuando define acuerdos estables de intercambio inter-módulo.
-2. **Aislamiento de Estado y Separación de Enrutamiento:** Cada módulo encapsula su propio estado (`Router::with_state(service)`). La instanciación y resolución topológica del grafo de dependencias reside en `modules/mod.rs` mediante `Modules::init(ctx)`. La definición jerárquica de endpoints, prefijos y sub-routers reside en `modules/router.rs` estructurada en funciones puras y composables (`users_routes`, `orders_routes`). Al montarse en el router principal, el estado se borra a `Router<()>`. No existe un `AppState` global monolítico.
+2. **Aislamiento de Estado y Delimitación Canónica de Enrutamiento (Opción A):**
+   Existe una frontera estricta e inviolable entre el enrutamiento interno del módulo y el enrutamiento global del sistema:
+   - **Dentro del Módulo (`src/modules/<modulo>/controller.rs`):**
+     - Define exclusivamente **rutas relativas al recurso** (`/`, `/{id}`). Ignora prefijos de API o nombres de versión.
+     - Asocia verbos HTTP a funciones handler privadas (`post(create_user)`, `get(list_users)`).
+     - Encapsula el estado local inyectando su propio servicio (`.with_state(service)`). Al montarse en el router padre, el estado se borra limpiamente a `Router<()>`. **PROHIBIDO** crear un `AppState` global monolítico.
+     - Maneja la extracción y validación web (`ValidatedBody`, `Query`, `Path`) y formatea la respuesta en el envelope `ApiResponse`.
+   - **Fuera del Módulo (`src/modules/router.rs` y `src/app.rs`):**
+     - Define el prefijo global y el versionado (`/api/v1`).
+     - Monta y orquesta el árbol jerárquico de sub-routers mediante `.nest("/users", users_routes(&modules.users))`.
+     - Aplica middlewares transversales globales (CORS, compresión gzip, request timeout, tracing W3C).
+     - **PROHIBIDO** que el módulo conozca su URL absoluta o prefijo exterior; y **PROHIBIDO** definir handlers sueltos fuera del módulo o forzar un estado monolítico.
 3. **Inyección por Constructor:** Las dependencias se inyectan explícitamente en `new()` mediante referencias `Arc<T>`.
 4. **Envelope Uniforme y Formatos Canónicos de Respuesta:**
    Toda respuesta de la API responde a uno de los siguientes 4 patrones estandarizados mediante `ApiResponse<T>`:
@@ -152,8 +166,10 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **PROHIBIDO** reintroducir capas horizontales globales (`src/domain/`, `src/application/`, `src/infrastructure/`). Toda lógica de un dominio pertenece a `src/modules/<dominio>/`.
 - **PROHIBIDO** colocar lógica de negocio o entidades de dominio dentro de `src/core/`. `src/core/` es exclusivamente infraestructura técnica transversal y agnóstica de negocio.
 
-### 2. Límite de Encapsulamiento de Persistencia y Fronteras de Tipos
-- **PROHIBIDO** exportar o compartir modelos de base de datos BSON (`*Model`) entre módulos distintos. `UserModel` (con sus `ObjectId`, campos BSON y `deleted_at`) es un detalle de implementación privado de `modules/users/`.
+### 2. Límite de Encapsulamiento de Persistencia y Fronteras de Tipos (Enforced by Compiler)
+- **PROHIBIDO** exportar o compartir esquemas de base de datos BSON (`*Document`) o entidades de dominio (`entity.rs`) entre módulos distintos. `UserDocument` y `User` son detalles privados de `modules/users/`.
+- **OBLIGATORIO: Encapsulamiento por Compilador con `pub(super)`:** En `src/modules/<modulo>/mod.rs`, únicamente `dto` y `service` (o `workflow`) se exportan públicamente (`pub mod`). Los submódulos internos (`document`, `entity`, `repository` y `controller`) deben declararse con `pub(super) mod` para que el compilador de Rust sea el primer guardrail infranqueable que impida la importación ilegal de detalles internos (`error[E0603]: module is private`).
+- **PROHIBIDO** referenciar estructuras de dominio de otros módulos dentro de entidades (ej. `Order` jamás debe contener un struct `User`). Las referencias inter-módulo se representan estrictamente mediante **Identificadores Opacos** (`user_id: String`).
 - La comunicación entre módulos se realiza exclusivamente invocando el **Servicio** del otro módulo (`Arc<OtherService>`), el cual intercambia únicamente contratos públicos de salida (**DTOs** como `UserOutput`).
 
 ### 3. Límite de Dependencias Cíclicas y Grafo Acíclico de Módulos (DAG)
@@ -216,8 +232,11 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **OBLIGATORIO** usar la macro `crate::as_json!(&data)` al registrar payloads u objetos estructurados en eventos de log para evitar pánicos por serialización y garantizar JSON nativo en Cloud Logging.
 - **OBLIGATORIO** encadenar `.instrument(tracing::Span::current())` en cualquier tarea asíncrona desacoplada (`tokio::spawn`) para garantizar la continuidad del `trace_id`.
 
-### 8. Límite de Sintaxis y Routing Web
-- **Rutas en Axum:** Axum utiliza llaves `{id}`, **PROHIBIDO** el uso de sintaxis de dos puntos (`:id`).
+### 8. Límite de Sintaxis y Delimitación de Routing Web
+- **Sintaxis de Rutas en Axum:** Axum utiliza llaves `{id}`, **PROHIBIDO** el uso de sintaxis de dos puntos (`:id`).
+- **PROHIBIDO** acoplar controladores a prefijos globales: `controller.rs` solo define rutas relativas al recurso (`/`, `/{id}`).
+- **PROHIBIDO** extraer handlers de un módulo para montarlos en un router global sin encapsular su estado (`.with_state(service)`). El estado del servicio vive y se borra a `Router<()>` en el módulo.
+- **PROHIBIDO** declarar prefijos globales (`/api/v1`) o nombres canónicos de recurso dentro de los módulos. La composición jerárquica de URLs pertenece exclusivamente a `src/modules/router.rs`.
 
 ### 9. Límite de Economía de Código (Cero Dogma)
 - **PROHIBIDO** inventar traits dinámicos (`Arc<dyn Trait>`) o dobles de prueba sintéticos (mocks) por defecto. Usa tipos concretos `Arc<T>` a menos que exista una necesidad técnica real e ineludible de polimorfismo dinámico en runtime.
@@ -245,11 +264,11 @@ Toda tarea se considera completada única y exclusivamente si los siguientes 4 c
 # 1. Verificación oficial de formateo (Rust 2024)
 cargo fmt --check
 
-# 2. Verificación estricta del linter (CERO advertencias permitidas)
-cargo clippy -- -D warnings
+# 2. Verificación estricta del linter en todos los targets (CERO advertencias permitidas)
+cargo clippy --all-targets -- -D warnings
 
-# 3. Verificación de compilación de tipos
-cargo check
+# 3. Verificación de compilación de tipos en todos los targets
+cargo check --all-targets
 
 # 4. Verificación de integridad de la suite de pruebas
 cargo test
@@ -276,8 +295,11 @@ grep -rn "TimeoutLayer" src --include="*.rs"
 
 # 6. Auditar importaciones inter-módulo para verificar que no haya ciclos
 grep -rn "crate::modules::" src/modules --include="*.rs"
+
+# 7. Verificar que no haya fugas de persistencia privada (document) entre módulos distintos
+grep -rn "crate::modules::.*::document" src/modules --include="*.rs"
 ```
-*Salida esperada para comandos 1 al 5: completamente vacía. Para el comando 6: grafo estrictamente acíclico y unidireccional (si el módulo X importa a Y, el módulo Y jamás debe importar a X).*
+*Salida esperada para comandos 1 al 5 y 7: completamente vacía. Para el comando 6: grafo estrictamente acíclico y unidireccional (si el módulo X importa a Y, el módulo Y jamás debe importar a X).*
 
 ### 3.3 Protocolo ante Fallos en la Verificación
 - Si `cargo fmt --check` falla $\rightarrow$ Ejecutar `cargo fmt` y re-verificar.
