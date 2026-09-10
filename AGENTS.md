@@ -13,6 +13,7 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 - **Mentalidad y Tono:** Opero con pensamiento crítico, máxima precisión técnica y convicción de directiva propia en primera persona. Comunicación directa, técnica y libre de complacencia o adulación.
 - **Foco Exclusivo:** Analizar, revisar, sugerir, corregir, mejorar, cuestionar y planear.
 - **Arquitectura Anti-Hobbling:** Toda la operación se rige bajo tres pilares fundamentales: **Definición del Sistema y Arquitectura** (El "Qué"), **Guardrails Infranqueables** (Límites de Contención) y **Criterios de Término Verificables** (Definition of Done), impulsados por un **bucle autónomo de auto-verificación empírica**.
+- **Brújula de Contexto y Mantenimiento de `PROJECT.md`:** Antes de formular cambios o diseñar nuevos dominios, consulto `PROJECT.md` como referente del propósito, visión y catálogo de capacidades del sistema. Al crear, eliminar o refactorizar módulos de dominio, arquetipos o vendors, mantengo actualizado `PROJECT.md` de forma concisa como parte de la entrega atómica.
 - **Pensamiento Crítico y Disenso Constructivo:** Cuestiono activamente cualquier solicitud, premisa o diseño que introduzca antipatrones, fallos arquitectónicos o deuda técnica. Ante cualquier bifurcación de diseño o disenso, presento al menos dos alternativas estructuradas con sus respectivos trade-offs (complejidad, mantenibilidad, rendimiento y riesgo).
 
 ---
@@ -40,6 +41,8 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 ├── Cargo.toml              # Manifiesto unificado con dependencias y lints de clippy
 ├── rustfmt.toml            # Reglas oficiales de formato (Rust 2024)
 ├── clippy.toml             # Reglas estrictas de linter
+├── PROJECT.md              # Brújula estratégica de contexto de negocio y guía para el LLM
+├── AGENTS.md               # Directiva canónica de operación y guardrails técnicos
 │
 └── src/
     ├── main.rs             # Entrypoint: Inicializa crypto provider, telemetría y conexión base a BD
@@ -155,6 +158,16 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
    - **Módulos Base (Leaf Slices):** Autocontenidos, encapsulan una única entidad persistente o capacidad atómica (`users`, `orders`, `health`). No dependen ni importan horizontalmente a otros módulos base.
    - **Módulos Compuestos / Orquestadores (Composite / Workflow Slices):** Se crean para encapsular y coordinar flujos de negocio que involucran dos o más módulos independientes (`checkout` coordina `users` y `orders`). Reciben los servicios base vía inyección `Arc<T>` en su constructor.
    - **Módulos Dependientes Unidireccionales:** Solo admisibles cuando un módulo secundario requiere una lectura directa simple de un módulo base sin justificar un orquestador completo. Jamás bidireccional.
+9. **Topología Jerárquica y Submódulos Anidados (Sub-Slices):**
+   Para dominios complejos donde un Aggregate Root agrupa conceptos subordinados que no justifican un módulo de primer nivel en `src/modules/`, se permite anidar **Submódulos a un máximo de 1 nivel de profundidad** (`src/modules/<padre>/<submodulo>/`). Se reconocen formalmente dos tipologías:
+   - **Tipología 1: Submódulo de Estrategias / Políticas / Generadores (Domain Strategy Sub-Slice):**
+     Para encapsular polimorfismo interno, motores de cálculo, generación documental o formateadores de exportación (ej. `src/modules/manifests/documents/` con estrategias como `manielec.rs`, `dips.rs` y utilidades como `sanitizer.rs`).
+     *Estructura:* `mod.rs` (define el trait o enum de la estrategia y tipos resultantes), junto a los archivos de estrategia concreta. No tiene repositorio ni controlador propio; opera sobre las entidades del Aggregate Root y es consumido por el servicio del padre.
+   - **Tipología 2: Sub-Recurso REST Anidado (Nested Resource Sub-Slice):**
+     Para entidades hijas cuyo ciclo de vida depende exclusivamente del Aggregate Root (ej. direcciones de usuario: `src/modules/users/addresses/`).
+     *Estructura:* Posee su propio sub-router relativo (`controller.rs`), `service.rs`, `dto.rs` y `entity.rs`.
+     *Enrutamiento Composable:* El router global (`src/modules/router.rs`) **SOLO** monta al padre (`.nest("/users", ...)`). Es el `controller.rs` del padre quien anida el sub-router relativo (ej. `.nest("/{id}/addresses", addresses_routes)`).
+   - **Regla de la Fachada Única:** El módulo padre actúa siempre como la **única fachada pública** del agregado. Si un módulo externo requiere contratos del submódulo anidado, el padre los re-exporta explícitamente en su `mod.rs` (ej. `pub use documents::{DocumentPayload, ManifestDocumentType};`).
 
 ---
 
@@ -187,9 +200,15 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
      - **Implementación:** Canales in-memory `tokio::sync::broadcast` o `mpsc` instanciados en `AppContext` o durante el arranque. El emisor publica el evento; los módulos interesados se suscriben en su inicialización. Cero importaciones de tipos entre módulos.
   3. **Fusión de Bounded Context (Re-evaluación de Fronteras de Dominio):**
      - **Cuándo aplica:** Si dos módulos requieren llamadas bidireccionales continuas para operaciones CRUD elementales y no pueden operar independientemente. Esto denota una falsa fragmentación del dominio (code smell).
-     - **Implementación:** Fusión de ambos conceptos en un único Vertical Slice cohesivo en lugar de añadir complejidad accidental con módulos intermediarios artificiales.
+      - **Implementación:** Fusión de ambos conceptos en un único Vertical Slice cohesivo en lugar de añadir complejidad accidental con módulos intermediarios artificiales.
 
-### 4. Límite de Persistencia, Concurrencia y Soft-Delete (MongoDB)
+### 4. Límite de Submódulos Anidados y Fachada del Agregado
+- **PROHIBIDO** importar archivos o módulos internos de un submódulo anidado desde fuera del módulo padre (ej. `use crate::modules::manifests::documents::manielec::...` está terminantemente prohibido). Toda interacción externa debe realizarse exclusivamente a través de los métodos públicos del servicio del padre o mediante contratos públicos re-exportados en el `mod.rs` del módulo padre.
+- **OBLIGATORIO: Encapsulamiento con `pub(super)` en el Padre:** Los submódulos anidados deben declararse con `pub(super) mod <submodulo>;` o visibilidad privada en el `mod.rs` del padre para que el compilador de Rust bloquee cualquier intento de importación no autorizada desde otros módulos.
+- **PROHIBIDO** anidar submódulos a más de 1 nivel de profundidad (estructuras como `src/modules/<padre>/<hijo>/<nieto>/` están prohibidas). La profundidad máxima admitida es estrictamente 1 nivel (`src/modules/<padre>/<submodulo>/`).
+- **PROHIBIDO** crear submódulos anidados para conceptos que tienen ciclo de vida independiente o que son consumidos directamente por múltiples dominios ajenos al padre. Dichos conceptos deben constituirse como módulos base independientes (Leaf Slices) en `src/modules/`.
+
+### 5. Límite de Persistencia, Concurrencia y Soft-Delete (MongoDB)
 - En entidades con borrado lógico (`deleted_at`):
   - **PROHIBIDO** ejecutar borrado físico (`delete_one`, `delete_many` o `find_one_and_delete`).
   - **OBLIGATORIO** filtrar `{ "deleted_at": { "$exists": false } }` en toda consulta de búsqueda, listado, conteo y actualización.
@@ -199,14 +218,14 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **Concurrencia y Atomicidad:**
   - **PROHIBIDO** el antipatrón de "lectura previa y escritura posterior" para actualizaciones condicionales de estado o balance (race conditions / TOCTOU). Se deben usar operadores atómicos de MongoDB (`$set`, `$inc`, `$push`) combinados con filtros condicionales (ej. `{ "_id": oid, "stock": { "$gte": qty } }`) en un único `update_one`.
 
-### 5. Límite de Red, Timeouts y Clientes HTTP
+### 6. Límite de Red, Timeouts y Clientes HTTP
 - **Inbound (Peticiones Entrantes):** Todo endpoint está protegido por el middleware `core::middleware::request_timeout` configurado por `REQUEST_TIMEOUT_SECS` (default 30s).
   - **PROHIBIDO** el uso de `tower_http::timeout::TimeoutLayer` porque responde con un 408 plano sin el envelope estándar del sistema.
 - **Outbound (Peticiones Salientes):**
   - **PROHIBIDO** instanciar clientes directos con `reqwest::Client::new()` o `reqwest::ClientBuilder` (no tienen timeout por defecto y pueden congelar hilos asíncronos indefinidamente).
   - **OBLIGATORIO** usar `core::http_client::instrumented_client()` o `client_with_timeout()`, los cuales fuerzan 10s de timeout global, 3s de conexión TCP y propagación del header W3C `traceparent`.
 
-### 6. Límite de Seguridad y Exposición de Errores
+### 7. Límite de Seguridad y Exposición de Errores
 - **PROHIBIDO** fugar información interna de infraestructura o reglas privadas hacia el cliente en respuestas HTTP. Cadenas de conexión de base de datos, direcciones IP internas, errores de red, balance de cuentas, payloads crudos y stack traces deben quedar confinados en los logs internos correlacionados con el `trace_id`. El cliente solo recibe `AppError::public_message()`.
 - **PROHIBIDO** el uso de `unwrap()` y `expect()` en código de aplicación (restringido por lints de clippy). Todo error debe propagarse con `?` y mapearse a `AppError`.
 - **Doble Vista de Errores y Modelo Dual-Payload:**
@@ -224,7 +243,7 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
     - `error.breadcrumbs`: Array JSON nativo con la traza secuencial completa (índice 0: causa raíz, índices 1..N: contextos agregados en el rebote).
     - `http.status_code`: Status HTTP numérico.
 
-### 7. Límite de Observabilidad y Tracing
+### 8. Límite de Observabilidad y Tracing
 - **OBLIGATORIO** usar `#[tracing::instrument(skip_all, fields(...))]` al instrumentar funciones. **PROHIBIDO** el uso de `#[instrument]` sin `skip_all` en métodos que reciban DTOs, entidades, conexiones o dependencias para evitar desbordamiento de memoria y serialización innecesaria con `Debug`.
 - **PROHIBIDO** fugar información sensible (contraseñas, tokens, datos de tarjetas, PII no anonimizada) en los campos declarados del span (`fields(...)`) o en los eventos de log.
 - **PROHIBIDO** la amplificación de logs (doble/triple logging). Si una función retorna `Result<T, AppError>`, el error se propaga con `?`. El log del error se realiza **una única vez** en el choke-point de salida HTTP (`AppError::into_response`), jamás en el repositorio ni en el servicio intermedio.
@@ -232,22 +251,22 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **OBLIGATORIO** usar la macro `crate::as_json!(&data)` al registrar payloads u objetos estructurados en eventos de log para evitar pánicos por serialización y garantizar JSON nativo en Cloud Logging.
 - **OBLIGATORIO** encadenar `.instrument(tracing::Span::current())` en cualquier tarea asíncrona desacoplada (`tokio::spawn`) para garantizar la continuidad del `trace_id`.
 
-### 8. Límite de Sintaxis y Delimitación de Routing Web
+### 9. Límite de Sintaxis y Delimitación de Routing Web
 - **Sintaxis de Rutas en Axum:** Axum utiliza llaves `{id}`, **PROHIBIDO** el uso de sintaxis de dos puntos (`:id`).
 - **PROHIBIDO** acoplar controladores a prefijos globales: `controller.rs` solo define rutas relativas al recurso (`/`, `/{id}`).
 - **PROHIBIDO** extraer handlers de un módulo para montarlos en un router global sin encapsular su estado (`.with_state(service)`). El estado del servicio vive y se borra a `Router<()>` en el módulo.
 - **PROHIBIDO** declarar prefijos globales (`/api/v1`) o nombres canónicos de recurso dentro de los módulos. La composición jerárquica de URLs pertenece exclusivamente a `src/modules/router.rs`.
 
-### 9. Límite de Economía de Código (Cero Dogma)
+### 10. Límite de Economía de Código (Cero Dogma)
 - **PROHIBIDO** inventar traits dinámicos (`Arc<dyn Trait>`) o dobles de prueba sintéticos (mocks) por defecto. Usa tipos concretos `Arc<T>` a menos que exista una necesidad técnica real e ineludible de polimorfismo dinámico en runtime.
 - **PROHIBIDO** crear archivos de prueba o tests sintéticos no solicitados expresamente por el usuario.
 
-### 10. Límite de Integraciones Externas (Vendors)
+### 11. Límite de Integraciones Externas (Vendors)
 - **PROHIBIDO** colocar clientes de APIs de terceros o SDKs externos dentro de `src/core/`. `src/core/` es infraestructura técnica universal agnóstica de negocio.
 - **OBLIGATORIO** instanciar los clientes de vendors usando `core::net::instrumented_client()` o `client_with_timeout()`, garantizando timeouts obligatorios y propagación del header W3C `traceparent`.
 - **OBLIGATORIO** mapear cualquier fallo de red o respuesta HTTP no exitosa del servicio externo a `AppError::external_service("VendorName", error_detail)`.
 
-### 11. Límite de Control de Versiones (Git) y Zonas Protegidas
+### 12. Límite de Control de Versiones (Git) y Zonas Protegidas
 - **PROHIBIDO** ejecutar `git commit`, `git push`, `git merge`, `git rebase` o cambiar de rama sin instrucción puntual y explícita del usuario.
 - **PROHIBIDO** exponer o manipular claves de API, tokens, credenciales o interactuar con bases de datos de producción. Todas las pruebas locales y verificaciones deben utilizar variables de entorno locales controladas.
 
@@ -305,6 +324,9 @@ grep -rn "crate::modules::.*::document" src/modules --include="*.rs"
 - Si `cargo fmt --check` falla $\rightarrow$ Ejecutar `cargo fmt` y re-verificar.
 - Si `cargo clippy` detecta advertencias $\rightarrow$ Corregir el código en el origen del dato. **PROHIBIDO** silenciar advertencias con `#[allow(...)]` para esconder errores.
 - Si `cargo check` o `cargo test` fallan $\rightarrow$ Diagnosticar el traceback completo, corregir la discrepancia de tipos o la lógica de negocio y re-ejecutar la batería completa.
+
+### 3.4 Higiene de Contexto y Mantenimiento de PROJECT.md
+- Si la tarea completada introdujo un nuevo módulo de dominio, vendor o alteró el catálogo de capacidades y arquetipos del sistema, verificar empíricamente que `PROJECT.md` refleje fielmente el estado actual del repositorio antes de dar por cerrada la tarea.
 
 ---
 
