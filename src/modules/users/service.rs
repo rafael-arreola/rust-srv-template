@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use super::dto::{CreateUserInput, PaginationQuery, UpdateUserInput, UserOutput};
+use super::dto::{
+    CreateUserInput, Paginated, PaginatedUsers, PaginationQuery, UpdateUserInput, UserOutput,
+};
 use super::entity::User;
 use super::repository::UserRepository;
 use crate::core::error::{AppError, AppResult};
@@ -37,12 +39,12 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn list_users(&self, query: &PaginationQuery) -> AppResult<(Vec<UserOutput>, u64)> {
+    pub async fn list_users(&self, query: &PaginationQuery) -> AppResult<PaginatedUsers> {
         let users = self.repo.find_all(query.skip(), i64::from(query.limit())).await?;
         let total = self.repo.count().await?;
 
         let outputs = users.into_iter().map(Into::into).collect();
-        Ok((outputs, total))
+        Ok(Paginated::new(outputs, total, query.page(), query.limit()))
     }
 
     #[tracing::instrument(skip_all, fields(%id))]

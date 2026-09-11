@@ -15,7 +15,7 @@ chrono = { version = "0.4", default-features = false, features = [
 dotenvy = "0.15"
 erased-serde = "0.4"
 futures = "0.3"
-mongodb = { version = "3.8", default-features = false, features = [
+mongodb = { version = "3.9", default-features = false, features = [
     "bson-3",
     "compat-3-3-0",
     "rustls-tls",

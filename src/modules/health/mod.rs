@@ -1,4 +1,4 @@
-pub mod controller;
+mod controller;
 
 use axum::{Router, routing::get};
 use mongodb::Database;

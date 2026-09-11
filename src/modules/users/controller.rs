@@ -5,11 +5,11 @@ use axum::{
 };
 use std::sync::Arc;
 
-use super::dto::{CreateUserInput, PaginationQuery, UpdateUserInput, UserOutput};
+use super::dto::{CreateUserInput, PaginatedUsers, PaginationQuery, UpdateUserInput, UserOutput};
 use super::service::UserService;
 use crate::core::error::AppError;
 use crate::core::extractors::{PathParam, ValidatedBody, ValidatedQuery};
-use crate::core::response::{ApiResponse, PaginatedResponse};
+use crate::core::response::ApiResponse;
 
 pub fn routes(service: Arc<UserService>) -> Router {
     Router::new()
@@ -40,9 +40,9 @@ async fn get_user(
 async fn list_users(
     State(service): State<Arc<UserService>>,
     ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
-) -> Result<ApiResponse<PaginatedResponse<UserOutput>>, AppError> {
-    let (users, total) = service.list_users(&query).await?;
-    Ok(ApiResponse::paginated(users, total, query.page(), query.limit()))
+) -> Result<ApiResponse<PaginatedUsers>, AppError> {
+    let paginated = service.list_users(&query).await?;
+    Ok(ApiResponse::ok(paginated))
 }
 
 #[tracing::instrument(skip_all)]
