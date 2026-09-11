@@ -199,6 +199,8 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 ### 12. External integrations (vendors)
 
 - **FORBIDDEN:** placing third-party API clients or external SDKs in `src/core/`.
+- **FORBIDDEN:** declaring data structs (`Serialize`/`Deserialize`) inside `client.rs`. `client.rs` is strictly functional (network calls, headers, error mapping).
+- **REQUIRED (Vendor DTO Organization):** external vendor structs live in `dto.rs` (single-purpose vendors with <5 structs) or a segregated `dto/` directory (complex vendors with >=5 structs or multiple domain resources).
 - **REQUIRED:** instantiate vendor clients through `core::net::instrumented_client()` or `client_with_timeout()`.
 - **REQUIRED:** map any network failure or unsuccessful HTTP response to `AppError::external_service("VendorName", error_detail)`.
 
