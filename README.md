@@ -78,6 +78,7 @@ Un error frecuente en el software es obligar a que todas las carpetas tengan exa
 rust-srv-template/
 ├── Cargo.toml                  # Configuración general del proyecto en Rust
 ├── AGENTS.md                   # Directiva técnica detallada para desarrolladores y agentes IA
+├── docs/ARCHITECTURE.md        # Referencia de arquetipos, envelopes y estrategias de desacoplamiento
 │
 └── src/
     ├── main.rs                 # Encendido y arranque del servidor

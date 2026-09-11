@@ -2,7 +2,7 @@
 //!
 //! Contiene exclusivamente tipos puros (enums de catálogo cerrado y value objects) con serde y
 //! sus invariantes. No es una capa horizontal: aquí no hay servicios, repositorios, controladores
-//! ni lógica con I/O. Reglas completas en `AGENTS.md` (Pilar 1 §1.3.10 y Pilar 2 límite 13):
+//! ni lógica con I/O. Reglas completas en `AGENTS.md` (§1.3.10 y Guardrail 13):
 //!
 //! - Orden de dependencias: `core <- shared <- modules, vendors`. `shared` solo importa crates hoja
 //!   (`serde`, `validator`, `chrono`, `thiserror`) y, como única excepción, `crate::core::error`.
