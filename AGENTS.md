@@ -222,6 +222,22 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 - **FORBIDDEN:** monolithic services (>400 lines) that mix CSV parsing, chunking, task enqueuing, and database updates into procedural god-methods.
 - **REQUIRED:** for bulk/batch ingestion or multi-step processing slices, decompose into dedicated sub-components within the slice (`pipeline.rs`, `csv.rs`, `worker.rs`), keeping `service.rs` as a thin domain orchestration facade.
 
+### 16. Import Hygiene and Module Qualification
+
+- **FORBIDDEN:** inline fully-qualified paths in function signatures or bodies (e.g. `crate::modules::...` or `crate::core::...`). All imports belong at the top of the file.
+- **FORBIDDEN:** bare imports of generic names prone to collision (`DateTime`, `Error`, `Id`).
+- **REQUIRED (Parent Module Qualification):** import the immediate parent container at the top and qualify with a single prefix in code:
+
+  ```rust
+  use mongodb::bson;
+  use crate::vendors::carrier;
+
+  let doc = bson::doc! { ... };
+  let client = carrier::Client::new(...);
+  ```
+
+- **EXCEPTIONS:** standard ubiquitous types (`Arc`, `Option`, `Result`, `HashMap`, `Utc`), root core types (`AppError`, `AppResult`, `ApiResponse`, `QueryResult`, `PaginationQuery`, `Paginated`), and derive traits (`Serialize`, `Deserialize`, `Validate`) are imported directly at the top of the file.
+
 ---
 
 ## 3. Verification and Completion
