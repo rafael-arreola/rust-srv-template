@@ -19,8 +19,8 @@ pub use telemetry::tracer;
 pub use db::{MongoProvider, RedisProvider};
 pub use http::{
     ApiResponse, AppError, AppResult, ContextExt, ErrorKind, ErrorSeverity, GenericApiResponse,
-    GenericPagination, Paginated, PaginatedResponse, PaginationQuery, ServerLauncher,
-    ValidatedBody,
+    GenericPagination, Paginated, PaginatedResponse, PaginationQuery, PathParam, ServerLauncher,
+    ValidatedBody, ValidatedQuery,
 };
 pub use net::{client_with_timeout, instrumented_client};
 pub use telemetry::{TracerGuard, init_tracing};

@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::State,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::dto::{CreateUserInput, PaginationQuery, UpdateUserInput, UserOutput};
 use super::service::UserService;
 use crate::core::error::AppError;
-use crate::core::extractors::ValidatedBody;
+use crate::core::extractors::{PathParam, ValidatedBody, ValidatedQuery};
 use crate::core::response::{ApiResponse, PaginatedResponse};
 
 pub fn routes(service: Arc<UserService>) -> Router {
@@ -30,7 +30,7 @@ async fn create_user(
 #[tracing::instrument(skip_all)]
 async fn get_user(
     State(service): State<Arc<UserService>>,
-    Path(id): Path<String>,
+    PathParam(id): PathParam<String>,
 ) -> Result<ApiResponse<UserOutput>, AppError> {
     let output = service.get_user(&id).await?;
     Ok(ApiResponse::ok(output))
@@ -39,19 +39,16 @@ async fn get_user(
 #[tracing::instrument(skip_all)]
 async fn list_users(
     State(service): State<Arc<UserService>>,
-    Query(query): Query<PaginationQuery>,
+    ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
 ) -> Result<ApiResponse<PaginatedResponse<UserOutput>>, AppError> {
-    let page = query.page();
-    let limit = query.limit();
-
-    let (users, total) = service.list_users(page, limit).await?;
-    Ok(ApiResponse::paginated(users, total, page, limit))
+    let (users, total) = service.list_users(&query).await?;
+    Ok(ApiResponse::paginated(users, total, query.page(), query.limit()))
 }
 
 #[tracing::instrument(skip_all)]
 async fn update_user(
     State(service): State<Arc<UserService>>,
-    Path(id): Path<String>,
+    PathParam(id): PathParam<String>,
     ValidatedBody(input): ValidatedBody<UpdateUserInput>,
 ) -> Result<ApiResponse<UserOutput>, AppError> {
     let output = service.update_user(&id, input).await?;
@@ -61,7 +58,7 @@ async fn update_user(
 #[tracing::instrument(skip_all)]
 async fn delete_user(
     State(service): State<Arc<UserService>>,
-    Path(id): Path<String>,
+    PathParam(id): PathParam<String>,
 ) -> Result<ApiResponse<()>, AppError> {
     service.delete_user(&id).await?;
     Ok(ApiResponse::empty())

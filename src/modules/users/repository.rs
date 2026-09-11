@@ -40,10 +40,7 @@ impl UserRepository {
                 .build(),
         ];
 
-        self.collection
-            .create_indexes(indexes)
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+        self.collection.create_indexes(indexes).await?;
 
         tracing::info!("✓ Users collection indexes verified");
         Ok(())
@@ -52,11 +49,7 @@ impl UserRepository {
     #[tracing::instrument(skip_all)]
     pub async fn create(&self, user: &User) -> AppResult<User> {
         let doc = UserDocument::from_domain(user, None);
-        let result = self
-            .collection
-            .insert_one(&doc)
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+        let result = self.collection.insert_one(&doc).await?;
 
         let mut created = user.clone();
         created.id = result.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default();
@@ -70,8 +63,7 @@ impl UserRepository {
         let user = self
             .collection
             .find_one(doc! { "_id": oid, "deleted_at": { "$exists": false } })
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
         Ok(user.map(UserDocument::into_domain))
     }
@@ -81,8 +73,7 @@ impl UserRepository {
         let user = self
             .collection
             .find_one(doc! { "email": email, "deleted_at": { "$exists": false } })
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
         Ok(user.map(UserDocument::into_domain))
     }
@@ -95,21 +86,18 @@ impl UserRepository {
             .skip(skip)
             .limit(limit)
             .sort(doc! { "created_at": -1 })
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
-        let docs: Vec<UserDocument> =
-            cursor.try_collect().await.map_err(|e| AppError::database(e.to_string()))?;
+        let docs: Vec<UserDocument> = cursor.try_collect().await?;
 
         Ok(docs.into_iter().map(UserDocument::into_domain).collect())
     }
 
     #[tracing::instrument(skip_all)]
     pub async fn count(&self) -> AppResult<u64> {
-        self.collection
-            .count_documents(doc! { "deleted_at": { "$exists": false } })
-            .await
-            .map_err(|e| AppError::database(e.to_string()))
+        let total =
+            self.collection.count_documents(doc! { "deleted_at": { "$exists": false } }).await?;
+        Ok(total)
     }
 
     #[tracing::instrument(skip_all)]
@@ -126,8 +114,7 @@ impl UserRepository {
                 doc! { "_id": oid, "deleted_at": { "$exists": false } },
                 doc! { "$set": bson_doc },
             )
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
         Ok(result.matched_count > 0)
     }
@@ -144,8 +131,7 @@ impl UserRepository {
                 doc! { "_id": oid, "deleted_at": { "$exists": false } },
                 doc! { "$set": { "deleted_at": now } },
             )
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
         Ok(result.matched_count > 0)
     }

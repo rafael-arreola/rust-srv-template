@@ -1,16 +1,7 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use mongodb::Database;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-static DRAINING: AtomicBool = AtomicBool::new(false);
-
-pub fn start_draining() {
-    DRAINING.store(true, Ordering::SeqCst);
-}
-
-pub fn is_draining() -> bool {
-    DRAINING.load(Ordering::SeqCst)
-}
+use crate::core::http::shutdown::is_draining;
 
 #[tracing::instrument(skip_all)]
 pub async fn healthz() -> impl IntoResponse {

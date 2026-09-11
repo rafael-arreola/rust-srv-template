@@ -28,6 +28,15 @@ Este documento es la **brújula conceptual y de dominio del servicio**. Proporci
 
 > **Nota del Boilerplate:** Los módulos de demostración (`users`, `orders`, `checkout`) incluidos en el template actúan como referencias vivas de los Arquetipos 1 y 2. Al inicializar el proyecto real, pueden renombrarse, refactorizarse o eliminarse según las necesidades del dominio.
 
+### 2.1 Vocabulario Compartido (Shared Kernel, `src/shared/`)
+
+| Tipo | Archivo | Representación serde | Consumidores | Reglas puras |
+| :--- | :--- | :--- | :--- | :--- |
+| `Country` | `geo.rs` | Código ISO 3166-1 alpha-2 en mayúsculas (`"MX"`) | Ninguno aún (scaffold de demostración) | `code()`, `currency()`, `TryFrom<&str>` |
+| `Currency` | `money.rs` | Código ISO 4217 en mayúsculas (`"MXN"`) | Ninguno aún; derivada por `Country::currency()` | `code()`, `minor_unit_digits()` |
+
+> Un tipo se registra aquí cuando cumple la regla de dos consumidores (dos módulos, o un módulo y un vendor). Si adquiere ciclo de vida, I/O o persistencia propios, se promueve a módulo y esta tabla conserva solo el identificador. Los catálogos de `Country` y `Currency` son de demostración: ajustarlos a los países y monedas reales del servicio.
+
 ---
 
 ## 3. Principios Rectores Inmutables (La Brújula del Boilerplate)
@@ -49,6 +58,8 @@ Todo desarrollo dentro de este servicio debe adherirse a los siguientes invarian
    Priorizar tipos concretos `Arc<T>`. Prohibido crear traits dinámicos (`Arc<dyn Trait>`) o dobles de prueba (mocks) por defecto.
 6. **Observabilidad como Ciudadano de Primer Nivel:**
    Toda petición genera y propaga un `trace_id` de OpenTelemetry que correlaciona la traza HTTP, las operaciones de base de datos y la respuesta.
+7. **Shared Kernel como Hoja de Vocabulario:**
+   Los tipos de negocio compartidos (`Country`, `Currency`, value objects) viven en `src/shared/` con orden de dependencias `core ← shared ← modules, vendors`. Solo tipos puros con representación serde estable; sin servicios, repositorios ni I/O. Regla de dos consumidores y política aditiva para variantes persistidas.
 
 ---
 
@@ -66,6 +77,8 @@ Cuando se solicite implementar una nueva capacidad, aplicar este árbol de decis
   $\rightarrow$ Crear **Arquetipo 4: Worker / Consumer Slice** (`consumer`, `service`, `mod`).
 - **¿Es una integración con una API externa (ej. pasarelas, SMS, carriers)?**
   $\rightarrow$ Crear un adaptador en `src/vendors/<nombre>/` con `instrumented_client()` y error mapping.
+- **¿Es un tipo de vocabulario (enum de catálogo cerrado o value object) que usan dos o más módulos, o un módulo y un vendor?**
+  $\rightarrow$ Colocarlo en `src/shared/` agrupado por concepto (`geo.rs`, `money.rs`, `contact.rs`) y registrarlo en la sección 2.1. Con un solo consumidor permanece en ese módulo. Con ciclo de vida o persistencia propios, es un módulo.
 - **¿Dónde van las rutas?**
   $\rightarrow$ Rutas relativas (`/`, `/{id}`) en `controller.rs`. El prefijo global (`/api/v1`) y el montaje `.nest()` en `src/modules/router.rs`.
 
@@ -73,4 +86,4 @@ Cuando se solicite implementar una nueva capacidad, aplicar este árbol de decis
 
 ## 5. Protocolo de Mantenimiento Continuo
 
-Cada vez que un agente o desarrollador incorpore, elimine o refactorice un módulo de dominio o vendor en el servicio real, **DEBE actualizar sintéticamente la sección 2 de este archivo** en la misma entrega atómica.
+Cada vez que un agente o desarrollador incorpore, elimine o refactorice un módulo de dominio, un vendor o un tipo del Shared Kernel en el servicio real, **DEBE actualizar sintéticamente las secciones 2 y 2.1 de este archivo** en la misma entrega atómica.

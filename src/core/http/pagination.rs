@@ -24,7 +24,7 @@ impl PaginationQuery {
 
     /// Desplazamiento (skip/offset) para motores de base de datos (MongoDB/SQL).
     pub fn skip(&self) -> u64 {
-        ((self.page() - 1) * self.limit()) as u64
+        (u64::from(self.page()) - 1) * u64::from(self.limit())
     }
 }
 

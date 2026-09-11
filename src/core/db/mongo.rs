@@ -1,6 +1,7 @@
 use crate::core::error::{AppError, AppResult};
 use mongodb::{Client, Database, options::ClientOptions};
 
+pub mod error;
 pub mod helpers;
 
 #[derive(Clone)]
@@ -15,10 +16,6 @@ impl MongoProvider {
             .map_err(|e| AppError::database(format!("Failed to parse MongoDB URI: {}", e)))?;
 
         client_options.app_name = Some(app_name.to_string());
-
-        // Emit OpenTelemetry spans per command/operation parented to the active trace
-        client_options.tracing =
-            Some(mongodb::otel::OpentelemetryOptions::builder().enabled(true).build());
 
         let client = Client::with_options(client_options).map_err(|e| {
             AppError::database(format!("Failed to initialize MongoDB client: {}", e))

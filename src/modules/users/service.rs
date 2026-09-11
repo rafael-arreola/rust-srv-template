@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::dto::{CreateUserInput, UpdateUserInput, UserOutput};
+use super::dto::{CreateUserInput, PaginationQuery, UpdateUserInput, UserOutput};
 use super::entity::User;
 use super::repository::UserRepository;
 use crate::core::error::{AppError, AppResult};
@@ -15,7 +15,7 @@ impl UserService {
         Self { repo }
     }
 
-    #[tracing::instrument(skip_all, fields(email = %input.email))]
+    #[tracing::instrument(skip_all)]
     pub async fn create_user(&self, input: CreateUserInput) -> AppResult<UserOutput> {
         let existing = self.repo.find_by_email(&input.email).await?;
         if existing.is_some() {
@@ -37,9 +37,8 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn list_users(&self, page: u32, limit: u32) -> AppResult<(Vec<UserOutput>, u64)> {
-        let skip = ((page.max(1) - 1) * limit) as u64;
-        let users = self.repo.find_all(skip, limit as i64).await?;
+    pub async fn list_users(&self, query: &PaginationQuery) -> AppResult<(Vec<UserOutput>, u64)> {
+        let users = self.repo.find_all(query.skip(), i64::from(query.limit())).await?;
         let total = self.repo.count().await?;
 
         let outputs = users.into_iter().map(Into::into).collect();

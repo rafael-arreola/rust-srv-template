@@ -8,11 +8,13 @@ RUN update-ca-certificates
 RUN apt-get update && apt-get install -y lld clang && rm -rf /var/lib/apt/lists/*
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
+# cargo-chef is installed once here so planner and cacher reuse this cached layer
+RUN cargo install cargo-chef
+
 ####################################################################################################
 ## Planner Stage - generates the dependency recipe
 ####################################################################################################
 FROM base AS planner
-RUN cargo install cargo-chef
 WORKDIR /app
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
@@ -21,7 +23,6 @@ RUN cargo chef prepare --recipe-path recipe.json
 ## Cacher Stage - builds only dependencies (cached between builds)
 ####################################################################################################
 FROM base AS cacher
-RUN cargo install cargo-chef
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
@@ -40,13 +41,13 @@ COPY . .
 RUN cargo build --release
 
 # Deploy gate: no image exists if the suite is red, so a broken build cannot
-# reach Cloud Run even through a manual deploy that bypasses GitHub Actions.
+# reach Cloud Run even through a manual deploy that bypasses an external CI pipeline.
 # `--release` reuses the artifacts just built instead of recompiling in debug.
 RUN cargo test --release --all-targets
 
-# Extract the compiled binary dynamically and strip symbols
+# Extract the compiled binary dynamically. Symbols are already stripped by
+# `profile.release.strip = true` in Cargo.toml, so no extra `strip` pass is needed.
 RUN BIN_PATH=$(find target/release -maxdepth 1 -type f -executable ! -name "*.so" ! -name "*.d" | head -n 1) && \
-    strip -s "$BIN_PATH" && \
     cp "$BIN_PATH" /app/target/release/service
 
 ####################################################################################################

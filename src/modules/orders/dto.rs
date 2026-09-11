@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+use super::entity::Order;
+
 pub use crate::core::pagination::{Paginated, PaginatedResponse, PaginationQuery};
 
 pub type PaginatedOrders = Paginated<OrderOutput>;
@@ -14,7 +16,7 @@ pub struct CreateOrderInput {
     #[serde(default)]
     pub user_name: Option<String>,
 
-    #[validate(length(min = 1, message = "At least one item is required"))]
+    #[validate(length(min = 1, message = "At least one item is required"), nested)]
     pub items: Vec<OrderItemInput>,
 }
 
@@ -47,4 +49,29 @@ pub struct OrderOutput {
     pub total_amount: f64,
     pub status: String,
     pub created_at: DateTime<Utc>,
+}
+
+/// El mapper vive en la frontera de transporte: `entity.rs` permanece puro y sin conocimiento
+/// de los contratos HTTP de salida.
+impl From<Order> for OrderOutput {
+    fn from(order: Order) -> Self {
+        Self {
+            id: order.id,
+            user_id: order.user_id,
+            user_name: order.user_name,
+            items: order
+                .items
+                .into_iter()
+                .map(|item| OrderItemOutput {
+                    total: item.total(),
+                    name: item.name,
+                    quantity: item.quantity,
+                    unit_price: item.unit_price,
+                })
+                .collect(),
+            total_amount: order.total_amount,
+            status: order.status,
+            created_at: order.created_at,
+        }
+    }
 }

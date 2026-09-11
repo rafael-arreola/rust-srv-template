@@ -9,8 +9,9 @@ use tower_http::{
     decompression::RequestDecompressionLayer,
 };
 
+use super::error::{AppError, AppResult};
 use super::middleware::{msgpack_negotiation, request_timeout, trace_context};
-use crate::modules::health;
+use super::shutdown::start_draining;
 
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
@@ -61,7 +62,11 @@ impl ServerLauncher {
         self
     }
 
-    pub async fn run(self) {
+    /// Enlaza el puerto y sirve hasta recibir la señal de apagado.
+    ///
+    /// Un fallo de bind se propaga en lugar de registrarse y continuar: el proceso debe terminar
+    /// con código distinto de cero para que el orquestador detecte el arranque fallido.
+    pub async fn run(self) -> AppResult<()> {
         let cors = if self.cors_origins == "*" {
             CorsLayer::permissive().allow_methods(Any).allow_headers(Any)
         } else {
@@ -91,39 +96,39 @@ impl ServerLauncher {
             self.drain_timeout
         );
 
-        match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => {
-                let (drain_tx, drain_rx) = tokio::sync::oneshot::channel();
-                let drain_timeout = self.drain_timeout;
+        let listener = tokio::net::TcpListener::bind(addr)
+            .await
+            .map_err(|e| AppError::internal(format!("Failed to bind to {addr}: {e}")))?;
 
-                let graceful = axum::serve(listener, app).with_graceful_shutdown(async move {
-                    shutdown_signal().await;
-                    let _ = drain_tx.send(());
-                });
+        let (drain_tx, drain_rx) = tokio::sync::oneshot::channel();
+        let drain_timeout = self.drain_timeout;
 
-                let drain_deadline = async move {
-                    if drain_rx.await.is_ok() {
-                        tokio::time::sleep(drain_timeout).await;
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                };
+        let graceful = axum::serve(listener, app).with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            let _ = drain_tx.send(());
+        });
 
-                tokio::select! {
-                    res = graceful => {
-                        if let Err(e) = res {
-                            tracing::error!("Server error: {}", e);
-                        }
-                    }
-                    _ = drain_deadline => {
-                        tracing::warn!("Drain timeout ({:?}) exceeded; terminating in-flight connections", drain_timeout);
-                    }
-                }
+        let drain_deadline = async move {
+            if drain_rx.await.is_ok() {
+                tokio::time::sleep(drain_timeout).await;
+            } else {
+                std::future::pending::<()>().await;
             }
-            Err(e) => {
-                tracing::error!("Failed to bind to {}: {}", addr, e);
+        };
+
+        tokio::select! {
+            res = graceful => {
+                res.map_err(|e| AppError::internal(format!("Server error: {e}")))?;
+            }
+            _ = drain_deadline => {
+                tracing::warn!(
+                    "Drain timeout ({:?}) exceeded; terminating in-flight connections",
+                    drain_timeout
+                );
             }
         }
+
+        Ok(())
     }
 }
 
@@ -154,6 +159,6 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    health::start_draining();
+    start_draining();
     tracing::info!("Shutdown signal received, draining in-flight connections...");
 }

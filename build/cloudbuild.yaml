@@ -11,10 +11,10 @@ steps:
       - |
         docker buildx create --use &&
         docker buildx build \
-          --cache-from=type=registry,ref=us-docker.pkg.dev/$PROJECT_ID/artifacts/$_CACHE:cache \
-          --cache-to=type=registry,ref=us-docker.pkg.dev/$PROJECT_ID/artifacts/$_CACHE:cache,mode=max \
+          --cache-from=type=registry,ref=$_ARTIFACT_REGISTRY/$_CACHE:cache \
+          --cache-to=type=registry,ref=$_ARTIFACT_REGISTRY/$_CACHE:cache,mode=max \
           --push \
-          -t us-docker.pkg.dev/$PROJECT_ID/artifacts/$_SERVICE_NAME:$COMMIT_SHA \
+          -t $_ARTIFACT_REGISTRY/$_SERVICE_NAME:$COMMIT_SHA \
           -f build/Dockerfile .
 
   # 2. Deploy to Cloud Run
@@ -24,7 +24,7 @@ steps:
       - "run"
       - "deploy"
       - "$_SERVICE_NAME"
-      - "--image=us-docker.pkg.dev/$PROJECT_ID/artifacts/$_SERVICE_NAME:$COMMIT_SHA"
+      - "--image=$_ARTIFACT_REGISTRY/$_SERVICE_NAME:$COMMIT_SHA"
       - "--service-account=$SERVICE_ACCOUNT_EMAIL"
       - "--region=$_REGION"
       - "--platform=managed"
@@ -42,6 +42,7 @@ steps:
 substitutions:
   _CACHE: "service-name-cache"
   _SERVICE_ENV: "PRD"
+  _ARTIFACT_REGISTRY: "us-docker.pkg.dev/$PROJECT_ID/artifacts"
   _REGION: "us-central1"
 
 options:

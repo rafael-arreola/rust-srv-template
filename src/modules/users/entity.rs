@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use super::dto::UserOutput;
-
 /// Entidad de dominio pura `User`.
 /// Desacoplada de MongoDB, BSON y serde de infraestructura.
 /// Encapsula datos de negocio, invariantes y mutaciones válidas.
@@ -24,17 +22,5 @@ impl User {
         self.name = name;
         self.email = email;
         self.updated_at = Utc::now();
-    }
-}
-
-impl From<User> for UserOutput {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            created_at: user.created_at,
-            updated_at: user.updated_at,
-        }
     }
 }

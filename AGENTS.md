@@ -13,7 +13,7 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 - **Mentalidad y Tono:** Opero con pensamiento crítico, máxima precisión técnica y convicción de directiva propia en primera persona. Comunicación directa, técnica y libre de complacencia o adulación.
 - **Foco Exclusivo:** Analizar, revisar, sugerir, corregir, mejorar, cuestionar y planear.
 - **Arquitectura Anti-Hobbling:** Toda la operación se rige bajo tres pilares fundamentales: **Definición del Sistema y Arquitectura** (El "Qué"), **Guardrails Infranqueables** (Límites de Contención) y **Criterios de Término Verificables** (Definition of Done), impulsados por un **bucle autónomo de auto-verificación empírica**.
-- **Brújula de Contexto y Mantenimiento de `PROJECT.md`:** Antes de formular cambios o diseñar nuevos dominios, consulto `PROJECT.md` como referente del propósito, visión y catálogo de capacidades del sistema. Al crear, eliminar o refactorizar módulos de dominio, arquetipos o vendors, mantengo actualizado `PROJECT.md` de forma concisa como parte de la entrega atómica.
+- **Brújula de Contexto y Mantenimiento de `PROJECT.md`:** Antes de formular cambios o diseñar nuevos dominios, consulto `PROJECT.md` como referente del propósito, visión y catálogo de capacidades del sistema. Al crear, eliminar o refactorizar módulos de dominio, arquetipos, vendors o tipos del Shared Kernel, mantengo actualizado `PROJECT.md` de forma concisa como parte de la entrega atómica.
 - **Pensamiento Crítico y Disenso Constructivo:** Cuestiono activamente cualquier solicitud, premisa o diseño que introduzca antipatrones, fallos arquitectónicos o deuda técnica. Ante cualquier bifurcación de diseño o disenso, presento al menos dos alternativas estructuradas con sus respectivos trade-offs (complejidad, mantenibilidad, rendimiento y riesgo).
 
 ---
@@ -23,8 +23,8 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 ### 1.1 Propósito y Stack del Repositorio
 `rust-srv-template` es un servicio backend de producción de alto rendimiento y baja latencia en Rust, diseñado bajo el patrón **Vertical Slice / Modular Monolith (estilo NestJS en Rust)**.
 - **Lenguaje y Edición:** Rust 2024.
-- **Servidor Web y Runtime:** Axum 0.8, Tokio 1 (full), Tower-HTTP 0.7 (CORS, compresión y descompresión gzip).
-- **Persistencia:** MongoDB 3.8 (driver oficial con instrumentación OpenTelemetry y BSON 3), Redis (opcional).
+- **Servidor Web y Runtime:** Axum 0.8, Tokio 1 (features acotadas: `macros`, `net`, `rt-multi-thread`, `signal`, `sync`, `time`), Tower-HTTP 0.7 (CORS, compresión y descompresión gzip).
+- **Persistencia:** MongoDB 3.8 (driver oficial con BSON 3; la trazabilidad de consultas se obtiene con spans de repositorio, no con instrumentación del driver), Redis (opcional).
 - **Observabilidad:** OpenTelemetry 0.32 con exportador a Google Cloud Trace y fallback local estructurado a Cloud Logging JSON.
 - **Validación y Serialización:** `validator` 0.21, `serde`, `serde_json`, `rmp-serde` (MessagePack).
 - **Manejo de Errores y Utilidades:** `thiserror` 2, `chrono` 0.4, `uuid` 1 (v7), `dotenvy` 0.15.
@@ -35,8 +35,6 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
 ├── build/
 │   ├── Dockerfile          # Multi-stage build con cargo-chef, LLD y distroless
 │   └── cloudbuild.yaml     # CI/CD en GCP Cloud Build y deploy a Cloud Run
-├── .github/workflows/
-│   └── ci.yml              # Pipeline de GitHub Actions (fmt, clippy, check, test, audit)
 ├── .dockerignore           # Exclusión de artefactos y secretos del contexto Docker
 ├── Cargo.toml              # Manifiesto unificado con dependencias y lints de clippy
 ├── rustfmt.toml            # Reglas oficiales de formato (Rust 2024)
@@ -51,11 +49,16 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
     │
     ├── core/               # Capacidades técnicas agnósticas agrupadas por familias
     │   ├── mod.rs          # Re-exports públicos unificados y retrocompatibles
-    │   ├── db/             # Familia: Persistencia y Pools (MongoDB con helpers BSON resilientes, Redis)
-    │   ├── http/           # Familia: Motor y Transporte Web (server, middleware, extractors, response, pagination, error)
+    │   ├── db/             # Familia: Persistencia y Pools (MongoDB con mapeo canónico de errores del driver y helpers BSON, Redis)
+    │   ├── http/           # Familia: Motor y Transporte Web (server, shutdown, middleware, extractors, fallback, response, pagination, error)
     │   ├── telemetry/      # Familia: Observabilidad y Trazas (tracer GCP/local, format Cloud Logging)
-    │   ├── net/            # Familia: Red Saliente Base (instrumented_client con timeouts y W3C)
+    │   ├── net/            # Familia: Red Saliente Base (instrumented_client falible con timeouts y W3C)
     │   └── macros.rs       # as_json! para estructuración segura de logs en Cloud Logging
+    │
+    ├── shared/             # SHARED KERNEL: vocabulario de negocio puro compartido (enums de catálogo, value objects)
+    │   ├── mod.rs          # Reglas del kernel y re-exports públicos (Country, Currency)
+    │   ├── geo.rs          # Country (ISO 3166-1 alpha-2) con reglas puras y estáticas
+    │   └── money.rs        # Currency (ISO 4217) y dígitos de unidad menor
     │
     ├── vendors/            # Adaptadores hacia Servicios Externos (APIs de terceros, SDKs, Cloud)
     │   ├── mod.rs          # Re-exports de clientes de integración
@@ -99,7 +102,7 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
      - Define exclusivamente **rutas relativas al recurso** (`/`, `/{id}`). Ignora prefijos de API o nombres de versión.
      - Asocia verbos HTTP a funciones handler privadas (`post(create_user)`, `get(list_users)`).
      - Encapsula el estado local inyectando su propio servicio (`.with_state(service)`). Al montarse en el router padre, el estado se borra limpiamente a `Router<()>`. **PROHIBIDO** crear un `AppState` global monolítico.
-     - Maneja la extracción y validación web (`ValidatedBody`, `Query`, `Path`) y formatea la respuesta en el envelope `ApiResponse`.
+     - Maneja la extracción y validación web con los extractores propios (`ValidatedBody`, `ValidatedQuery`, `PathParam`) y formatea la respuesta en el envelope `ApiResponse`.
    - **Fuera del Módulo (`src/modules/router.rs` y `src/app.rs`):**
      - Define el prefijo global y el versionado (`/api/v1`).
      - Monta y orquesta el árbol jerárquico de sub-routers mediante `.nest("/users", users_routes(&modules.users))`.
@@ -130,7 +133,7 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
        }
      }
      ```
-     `total_pages` se computa automáticamente con `(total).div_ceil(limit)`. Los handlers de listado reciben `Query(query): Query<PaginationQuery>` y extraen `query.page()` y `query.limit()`.
+     `total_pages` se computa automáticamente con `(total).div_ceil(limit)`. Los handlers de listado reciben `ValidatedQuery(query): ValidatedQuery<PaginationQuery>` y extraen `query.page()`, `query.limit()` y `query.skip()`. Al validarse en la frontera, un `limit` fuera del rango declarado `1..=100` se rechaza con 400 en lugar de acotarse silenciosamente.
    - **Respuesta Sin Contenido (`ApiResponse::empty()`):**
      Status HTTP 204 No Content, sin cuerpo serializado.
    - **Error Controlado (`AppError`):**
@@ -151,7 +154,7 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
      ```
      `breadcrumbs` en `data` es opcional: solo se incluye cuando se han apilado contextos públicos usando `.attach_public(...)`. Si no se apilan, `breadcrumbs` se omite y se mantiene el formato minimalista original. Se genera retornando `Err(AppError::...)`. El método `IntoResponse` formatea el envelope y oculta los detalles de infraestructura interna.
 5. **Validación en Fronteras:** La validación sintáctica de peticiones se delega a `ValidatedBody<T>` en los DTOs. La validación semántica se realiza en los servicios de negocio.
-6. **Observabilidad Unificada:** Todo endpoint y caso de uso debe ser trazable de extremo a extremo. El `trace_id` de OpenTelemetry generado en el middleware debe correlacionar la petición HTTP entrante, las queries de MongoDB y el envelope final de respuesta.
+6. **Observabilidad Unificada:** Todo endpoint y caso de uso debe ser trazable de extremo a extremo. El `trace_id` de OpenTelemetry generado en el middleware debe correlacionar la petición HTTP entrante, los spans de repositorio que envuelven las operaciones de MongoDB y el envelope final de respuesta.
 7. **Integraciones con Servicios Externos (Vendors):** Los clientes que se comunican con APIs de terceros, pasarelas o servicios en la nube residen en `src/vendors/<nombre>/`. Encapsulan sus propios DTOs externos y mapean fallos a `AppError::external_service`. Se inyectan en los servicios de negocio mediante `Arc<VendorClient>`. Si un vendor es estrictamente exclusivo de un solo módulo, puede encapsularse dentro de la carpeta de ese módulo.
 8. **Topología de Módulos y Grafo Acíclico Dirigido (DAG):**
    Toda relación inter-módulo debe formar estrictamente un Grafo Acíclico Dirigido resuelto deterministamente en `Modules::init(&ctx)`:
@@ -168,6 +171,12 @@ Estructurado bajo los **tres pilares fundamentales de diseño de instrucciones m
      *Estructura:* Posee su propio sub-router relativo (`controller.rs`), `service.rs`, `dto.rs` y `entity.rs`.
      *Enrutamiento Composable:* El router global (`src/modules/router.rs`) **SOLO** monta al padre (`.nest("/users", ...)`). Es el `controller.rs` del padre quien anida el sub-router relativo (ej. `.nest("/{id}/addresses", addresses_routes)`).
    - **Regla de la Fachada Única:** El módulo padre actúa siempre como la **única fachada pública** del agregado. Si un módulo externo requiere contratos del submódulo anidado, el padre los re-exporta explícitamente en su `mod.rs` (ej. `pub use documents::{DocumentPayload, ManifestDocumentType};`).
+10. **Shared Kernel (`src/shared/`) para Vocabulario de Negocio Compartido:**
+   Tercera categoría junto a `core/` (infraestructura técnica) y `modules/` (dominios). Aloja exclusivamente tipos puros de vocabulario de negocio consumidos por dos o más módulos, o por un módulo y un vendor: enums de catálogo cerrado (`Country`, `Currency`) y value objects con invariante propia (`Email`, `Money`). **No es una capa horizontal:** no contiene servicios, repositorios, controladores ni lógica de aplicación; solo el tipo, su representación serde y las reglas puras y estáticas derivadas del propio tipo (ej. `Country::currency()`).
+   - **Orden de dependencias estricto:** `core ← shared ← modules, vendors`. `shared` solo importa crates hoja (`serde`, `validator`, `chrono`, `thiserror`) y, como única excepción de `core`, `crate::core::error` para errores de parseo.
+   - **Neutralidad de almacenamiento:** los tipos se serializan como códigos string estables, idénticos en JSON (`dto.rs`) y BSON (`document.rs`), por lo que el mismo tipo atraviesa la Tríada Canónica sin mappers. Cero tipos de `bson`, `mongodb` o `axum`.
+   - **Criterio de pertenencia:** un concepto va a `shared` solo si carece de comportamiento con I/O, ciclo de vida o persistencia propios. Si adquiere cualquiera de los tres (ej. países administrables en base de datos), se promueve a módulo y `shared` conserva únicamente el identificador. Un DTO producido por un módulo y consumido por otros permanece en el `dto.rs`/`contract.rs` de su dueño; jamás se traslada a `shared`.
+   - **Frontera HTTP:** los tipos de `shared` implementan `Deserialize` estricto, de modo que un código no soportado se rechaza en `ValidatedBody`. Para parseo manual desde texto se usa `TryFrom<&str>`, que retorna `AppError` con 400 `INVALID_INPUT`.
 
 ---
 
@@ -178,6 +187,7 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 ### 1. Límite de Dominio y Cohesión
 - **PROHIBIDO** reintroducir capas horizontales globales (`src/domain/`, `src/application/`, `src/infrastructure/`). Toda lógica de un dominio pertenece a `src/modules/<dominio>/`.
 - **PROHIBIDO** colocar lógica de negocio o entidades de dominio dentro de `src/core/`. `src/core/` es exclusivamente infraestructura técnica transversal y agnóstica de negocio.
+- El vocabulario de negocio compartido entre módulos (enums de catálogo cerrado, value objects) pertenece a `src/shared/` bajo el Límite 13; jamás a `src/core/` ni duplicado en cada módulo.
 
 ### 2. Límite de Encapsulamiento de Persistencia y Fronteras de Tipos (Enforced by Compiler)
 - **PROHIBIDO** exportar o compartir esquemas de base de datos BSON (`*Document`) o entidades de dominio (`entity.rs`) entre módulos distintos. `UserDocument` y `User` son detalles privados de `modules/users/`.
@@ -223,7 +233,11 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
   - **PROHIBIDO** el uso de `tower_http::timeout::TimeoutLayer` porque responde con un 408 plano sin el envelope estándar del sistema.
 - **Outbound (Peticiones Salientes):**
   - **PROHIBIDO** instanciar clientes directos con `reqwest::Client::new()` o `reqwest::ClientBuilder` (no tienen timeout por defecto y pueden congelar hilos asíncronos indefinidamente).
-  - **OBLIGATORIO** usar `core::http_client::instrumented_client()` o `client_with_timeout()`, los cuales fuerzan 10s de timeout global, 3s de conexión TCP y propagación del header W3C `traceparent`.
+  - **OBLIGATORIO** usar `core::net::instrumented_client()` o `client_with_timeout()`, los cuales fuerzan 10s de timeout global, 3s de conexión TCP y propagación del header W3C `traceparent`. Ambos retornan `AppResult<ClientWithMiddleware>`: **PROHIBIDO** degradar un fallo de construcción a un cliente sin timeouts. El cliente se construye una única vez en el arranque (`AppContext::new`) y se comparte por clonación.
+
+### 6.1 Límite de Arranque y Terminación del Proceso
+- **OBLIGATORIO** que un fallo de arranque (proveedor criptográfico, conexión a MongoDB, construcción del cliente HTTP o enlace del puerto) termine el proceso con `ExitCode::FAILURE`. **PROHIBIDO** registrar el error y retornar con código 0: el orquestador (Cloud Run, Kubernetes) interpretaría un arranque fallido como salida limpia y no reiniciaría el contenedor.
+- El error fatal se emite una única vez con `err.log_now()` antes de cerrar el `TracerGuard`, garantizando que la traza se exporte antes de terminar.
 
 ### 7. Límite de Seguridad y Exposición de Errores
 - **PROHIBIDO** fugar información interna de infraestructura o reglas privadas hacia el cliente en respuestas HTTP. Cadenas de conexión de base de datos, direcciones IP internas, errores de red, balance de cuentas, payloads crudos y stack traces deben quedar confinados en los logs internos correlacionados con el `trace_id`. El cliente solo recibe `AppError::public_message()`.
@@ -255,6 +269,8 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 - **Sintaxis de Rutas en Axum:** Axum utiliza llaves `{id}`, **PROHIBIDO** el uso de sintaxis de dos puntos (`:id`).
 - **PROHIBIDO** acoplar controladores a prefijos globales: `controller.rs` solo define rutas relativas al recurso (`/`, `/{id}`).
 - **PROHIBIDO** extraer handlers de un módulo para montarlos en un router global sin encapsular su estado (`.with_state(service)`). El estado del servicio vive y se borra a `Router<()>` en el módulo.
+- **PROHIBIDO** usar los extractores crudos `Query<T>` y `Path<T>` de Axum en un controlador: sus rechazos responden texto plano sin `trace_id` ni `cause`. Se usan exclusivamente `ValidatedQuery<T>` y `PathParam<T>` de `core::extractors`.
+- **OBLIGATORIO** que el composition root (`src/app.rs`) registre `.fallback(fallback::not_found)` y `.method_not_allowed_fallback(fallback::method_not_allowed)` **después** de montar todo el árbol de rutas, dado que `method_not_allowed_fallback` solo alcanza los `MethodRouter` ya registrados. Así ninguna respuesta 404 o 405 escapa al envelope uniforme, conservando la cabecera `Allow` que añade el propio `MethodRouter` y la negociación MessagePack.
 - **PROHIBIDO** declarar prefijos globales (`/api/v1`) o nombres canónicos de recurso dentro de los módulos. La composición jerárquica de URLs pertenece exclusivamente a `src/modules/router.rs`.
 
 ### 10. Límite de Economía de Código (Cero Dogma)
@@ -269,6 +285,14 @@ Estos límites son absolutos. El agente tiene plena autonomía para diseñar e i
 ### 12. Límite de Control de Versiones (Git) y Zonas Protegidas
 - **PROHIBIDO** ejecutar `git commit`, `git push`, `git merge`, `git rebase` o cambiar de rama sin instrucción puntual y explícita del usuario.
 - **PROHIBIDO** exponer o manipular claves de API, tokens, credenciales o interactuar con bases de datos de producción. Todas las pruebas locales y verificaciones deben utilizar variables de entorno locales controladas.
+
+### 13. Límite del Shared Kernel (`src/shared/`)
+- **PROHIBIDO** importar `crate::modules`, `crate::vendors`, `bson`, `mongodb` o `axum` desde `src/shared/`. El kernel es una hoja de vocabulario; su única dependencia interna admitida es `crate::core::error`.
+- **PROHIBIDO** que `src/core/` importe `crate::shared` o `crate::modules`. Si core necesita un tipo de negocio, el tipo está mal clasificado o core está haciendo negocio.
+- **PROHIBIDO** alojar en `shared` servicios, repositorios, traits de comportamiento, funciones utilitarias sueltas (`utils.rs`, `helpers.rs`) o cualquier lógica con I/O o configuración. Las únicas reglas admitidas son métodos puros y estáticos del propio tipo, agrupados por concepto (`geo.rs`, `money.rs`, `contact.rs`).
+- **Regla de dos consumidores:** un tipo entra a `shared` cuando lo consumen dos módulos, o un módulo y un vendor. Un tipo con un único consumidor vive en ese módulo aunque parezca genérico. Nada se promueve de forma preventiva.
+- **Política aditiva para enums persistidos:** la representación serde de un tipo de `shared` es contrato público estable con radio de impacto sobre todas las colecciones que lo almacenan. **PROHIBIDO** renombrar o eliminar variantes mientras existan documentos que las contengan; una variante retirada del negocio se conserva y se marca inactiva. Un cambio de `rename_all` exige migración de datos.
+- **Frontera con vendors:** un vendor puede consumir tipos de `shared`, pero mapea en su propia frontera hacia los códigos del proveedor externo (ej. `MX` a `MEX`). El DTO externo del vendor es contrato del proveedor, no del negocio.
 
 ---
 
@@ -317,8 +341,14 @@ grep -rn "crate::modules::" src/modules --include="*.rs"
 
 # 7. Verificar que no haya fugas de persistencia privada (document) entre módulos distintos
 grep -rn "crate::modules::.*::document" src/modules --include="*.rs"
+
+# 8. Verificar que el Shared Kernel sea una hoja de vocabulario (sin módulos, vendors ni infraestructura)
+grep -rn "crate::modules\|crate::vendors\|bson\|mongodb\|axum" src/shared --include="*.rs"
+
+# 9. Verificar que core no dependa del Shared Kernel ni de módulos de dominio
+grep -rn "crate::shared\|crate::modules" src/core --include="*.rs"
 ```
-*Salida esperada para comandos 1 al 5 y 7: completamente vacía. Para el comando 6: grafo estrictamente acíclico y unidireccional (si el módulo X importa a Y, el módulo Y jamás debe importar a X).*
+*Salida esperada para comandos 1 al 5, 7, 8 y 9: completamente vacía. Para el comando 6: grafo estrictamente acíclico y unidireccional (si el módulo X importa a Y, el módulo Y jamás debe importar a X).*
 
 ### 3.3 Protocolo ante Fallos en la Verificación
 - Si `cargo fmt --check` falla $\rightarrow$ Ejecutar `cargo fmt` y re-verificar.
@@ -326,7 +356,7 @@ grep -rn "crate::modules::.*::document" src/modules --include="*.rs"
 - Si `cargo check` o `cargo test` fallan $\rightarrow$ Diagnosticar el traceback completo, corregir la discrepancia de tipos o la lógica de negocio y re-ejecutar la batería completa.
 
 ### 3.4 Higiene de Contexto y Mantenimiento de PROJECT.md
-- Si la tarea completada introdujo un nuevo módulo de dominio, vendor o alteró el catálogo de capacidades y arquetipos del sistema, verificar empíricamente que `PROJECT.md` refleje fielmente el estado actual del repositorio antes de dar por cerrada la tarea.
+- Si la tarea completada introdujo un nuevo módulo de dominio, vendor, tipo del Shared Kernel o alteró el catálogo de capacidades y arquetipos del sistema, verificar empíricamente que `PROJECT.md` refleje fielmente el estado actual del repositorio antes de dar por cerrada la tarea.
 
 ---
 

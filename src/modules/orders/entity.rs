@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use super::dto::{OrderItemOutput, OrderOutput};
-
 /// Item de orden como concepto de valor/entidad de dominio pura.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OrderItem {
@@ -46,29 +44,6 @@ impl Order {
             total_amount,
             status: "CREATED".to_string(),
             created_at: Utc::now(),
-        }
-    }
-}
-
-impl From<Order> for OrderOutput {
-    fn from(order: Order) -> Self {
-        Self {
-            id: order.id,
-            user_id: order.user_id,
-            user_name: order.user_name,
-            items: order
-                .items
-                .into_iter()
-                .map(|item| OrderItemOutput {
-                    total: item.total(),
-                    name: item.name,
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
-                })
-                .collect(),
-            total_amount: order.total_amount,
-            status: order.status,
-            created_at: order.created_at,
         }
     }
 }

@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::State,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::dto::{CreateOrderInput, OrderOutput};
 use super::service::OrderService;
 use crate::core::error::AppError;
-use crate::core::extractors::ValidatedBody;
+use crate::core::extractors::{PathParam, ValidatedBody};
 use crate::core::response::ApiResponse;
 
 pub fn routes(service: Arc<OrderService>) -> Router {
@@ -27,7 +27,7 @@ async fn create_order(
 #[tracing::instrument(skip_all)]
 async fn get_order(
     State(service): State<Arc<OrderService>>,
-    Path(id): Path<String>,
+    PathParam(id): PathParam<String>,
 ) -> Result<ApiResponse<OrderOutput>, AppError> {
     let output = service.get_order(&id).await?;
     Ok(ApiResponse::ok(output))

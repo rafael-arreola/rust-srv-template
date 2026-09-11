@@ -4,7 +4,8 @@ use reqwest_middleware::ClientWithMiddleware;
 
 use crate::config::Env;
 use crate::core::error::AppResult;
-use crate::core::http_client::instrumented_client;
+use crate::core::http::fallback;
+use crate::core::net::instrumented_client;
 use crate::core::server::ServerLauncher;
 use crate::modules::{build_api_router, health};
 
@@ -16,8 +17,8 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    pub fn new(db: Database, config: &'static Env) -> Self {
-        Self { db, config, http_client: instrumented_client() }
+    pub fn new(db: Database, config: &'static Env) -> AppResult<Self> {
+        Ok(Self { db, config, http_client: instrumented_client()? })
     }
 }
 
@@ -28,7 +29,13 @@ impl Application {
         let health_router = health::router(ctx.db.clone());
         let api_router = build_api_router(ctx).await?;
 
-        let app = Router::new().merge(health_router).nest("/api/v1", api_router);
+        // Los fallbacks se aplican al final: `method_not_allowed_fallback` solo alcanza los
+        // `MethodRouter` ya registrados, y `nest` los aplana en el router padre al montarlos.
+        let app = Router::new()
+            .merge(health_router)
+            .nest("/api/v1", api_router)
+            .fallback(fallback::not_found)
+            .method_not_allowed_fallback(fallback::method_not_allowed);
 
         Ok(app)
     }
@@ -44,8 +51,6 @@ impl Application {
             .with_request_timeout(config.request_timeout_secs)
             .with_msgpack(config.msgpack_enabled)
             .run()
-            .await;
-
-        Ok(())
+            .await
     }
 }

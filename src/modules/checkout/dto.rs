@@ -8,7 +8,7 @@ pub struct CheckoutInput {
     #[validate(length(min = 1, message = "user_id is required"))]
     pub user_id: String,
 
-    #[validate(length(min = 1, message = "At least one item is required"))]
+    #[validate(length(min = 1, message = "At least one item is required"), nested)]
     pub items: Vec<OrderItemInput>,
 }
 

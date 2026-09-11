@@ -48,7 +48,7 @@ En el mundo real, muchas actividades requieren la participación de más de un d
 
 ### 3. Flexibilidad Interna: No Todos los Módulos son Iguales
 Un error frecuente en el software es obligar a que todas las carpetas tengan exactamente los mismos archivos y carpetas internas. En esta arquitectura la estructura se adapta a la necesidad:
-- **Módulo con Datos Propios (Stateful):** Tiene ventanilla de atención (`controller`), reglas del área (`service`), archivador (`repository`), formato de expedientes (`model`) y solicitudes (`dto`). *Ejemplo: Usuarios y Órdenes.*
+- **Módulo con Datos Propios (Stateful):** Tiene ventanilla de atención (`controller`), reglas del área (`service`), archivador (`repository`), formato de expedientes (`entity` para las reglas y `document` para el archivo) y solicitudes (`dto`). *Ejemplo: Usuarios y Órdenes.*
 - **Módulo Coordinador (Composite/Workflow):** No necesita archivador propio porque no guarda expedientes nuevos; solo necesita su ventanilla (`controller`), su guía de coordinación (`workflow`) y sus formatos (`dto`). *Ejemplo: Checkout.*
 - **Módulo de Servicio Rápido (Lean):** Áreas que solo responden preguntas técnicas rápidas sin expedientes ni procesos largos. *Ejemplo: Health Checks (monitoreo del estado del servidor).*
 
@@ -85,6 +85,8 @@ rust-srv-template/
     ├── config.rs               # Carga de variables de entorno y puertos
     │
     ├── core/                   # Herramientas técnicas generales (base de datos, logs, seguridad)
+    │
+    ├── shared/                 # Vocabulario común a todos los departamentos (países, monedas)
     │
     └── modules/                # Módulos de Negocio
         ├── health/             # Monitor de salud del servicio (Arquetipo Lean)

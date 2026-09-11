@@ -20,7 +20,7 @@ impl CarrierClient {
         Self { client, base_url: base_url.into().trim_end_matches('/').to_string(), api_key }
     }
 
-    #[tracing::instrument(skip_all, fields(recipient = %req.recipient_name))]
+    #[tracing::instrument(skip_all)]
     pub async fn create_shipment(&self, req: &CreateShipmentInput) -> AppResult<ShipmentResponse> {
         let url = format!("{}/v1/shipments", self.base_url);
 

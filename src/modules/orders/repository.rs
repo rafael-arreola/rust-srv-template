@@ -30,10 +30,7 @@ impl OrderRepository {
                 .build(),
         ];
 
-        self.collection
-            .create_indexes(indexes)
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+        self.collection.create_indexes(indexes).await?;
 
         tracing::info!("✓ Orders collection indexes verified");
         Ok(())
@@ -42,11 +39,7 @@ impl OrderRepository {
     #[tracing::instrument(skip_all)]
     pub async fn create(&self, order: &Order) -> AppResult<Order> {
         let doc = OrderDocument::from_domain(order, None);
-        let result = self
-            .collection
-            .insert_one(&doc)
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+        let result = self.collection.insert_one(&doc).await?;
 
         let mut created = order.clone();
         created.id = result.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default();
@@ -61,8 +54,7 @@ impl OrderRepository {
         let order = self
             .collection
             .find_one(doc! { "_id": oid, "deleted_at": { "$exists": false } })
-            .await
-            .map_err(|e| AppError::database(e.to_string()))?;
+            .await?;
 
         Ok(order.map(OrderDocument::into_domain))
     }
