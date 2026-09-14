@@ -121,11 +121,11 @@ For persistent domain slices (Archetype 1):
 - `mod.rs`: DAG constructor (`pub async fn new`), route assembly (`Router<()>`), export control (only `dto` and `service`/`workflow` are `pub mod`; `command`, `entity`, `document`, `repository`, `controller` are `pub(super)`).
 - `controller.rs`: Relative HTTP routes (`/`, `/{id}`), project extractors (`ValidatedBody`, `ValidatedQuery`), response envelope formatting (`ApiResponse`).
 - `service.rs`: Business orchestration, semantic validation, domain transactions. Public methods accept/return DTOs only (`AppResult<OutputDto>`).
-- `entity.rs`: Domain aggregates, invariants, and Value Objects. Zero MongoDB or BSON imports.
-- `document.rs`: Private BSON storage schema (`ObjectId`, `_id`, `deleted_at`) with bidirectional mappers (`from_domain`, `into_domain`).
+- `entity.rs` (or directory `entity/`): Domain aggregates, invariants, and Value Objects. Zero MongoDB or BSON imports.
+- `document.rs` (or directory `document/`): Private BSON storage schema (`ObjectId`, `_id`, `deleted_at`) with bidirectional mappers (`from_domain`, `into_domain`).
 - `repository.rs`: MongoDB collection access, idempotent index creation, soft-delete filtering, query criteria execution.
 - `command.rs` (optional): internal command construction and multi-step pipeline state, private to the slice (`pub(super) mod command`).
-- `dto.rs`: HTTP transport serialization boundary (`*Input` with `validator`, `*Output` with `Serialize`, `*Query`). No mutable commands. `model.rs` is **FORBIDDEN**.
+- `dto.rs` (or directory `dto/`): HTTP transport serialization boundary (`*Input` with `validator`, `*Output` with `Serialize`, `*Query`). Segmented into `input.rs`, `output.rs`, `query.rs`, and optional sub-resources (`items.rs`). No mutable commands. `model.rs` is **FORBIDDEN**.
 
 ### 1.3 Core Architectural Contracts
 
@@ -277,7 +277,8 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 ### 14. Anti-Pattern: Transient Structs and Mutable Staging DTOs
 
-- **FORBIDDEN:** `Command` structs in `dto.rs` that act as mutable bags of fields, store `raw_payload`, or execute domain logic (such as `get_country()` or `to_manifest_data()`). `dto.rs` contains only immutable serialization contracts (`*Input`, `*Output`, `*Query`).
+- **REQUIRED (DTO Organization):** Use a single `dto.rs` for compact slices (≤3 DTOs, <150 lines). When a slice handles standard CRUD or multi-resource operations, separate into a `dto/` directory (`mod.rs`, `input.rs`, `output.rs`, `query.rs`, and optional sub-resources such as `items.rs` or `detail.rs`).
+- **FORBIDDEN:** `Command` structs in `dto.rs` or `dto/` that act as mutable bags of fields, store `raw_payload`, or execute domain logic (such as `get_country()` or `to_manifest_data()`). DTOs contain only immutable serialization contracts (`*Input`, `*Output`, `*Query`).
 - **FORBIDDEN:** declaring ephemeral structs with borrowed lifetimes (e.g. `struct X<'a>`) in `service.rs` or `repository.rs` merely to bypass argument count limits. Use domain value objects or entity builders.
 - **FORBIDDEN:** repository methods returning untyped tuples `AppResult<(Vec<T>, u64)>`. Use typed return structs.
 - **ALLOWED:** owned dependency structs such as `XModuleDeps` to group constructor dependencies for injection. They carry only live resources/services and are not domain staging.
@@ -287,7 +288,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 ### 15. Service Sizing and Pipeline Decomposition
 
 - **FORBIDDEN:** any slice file over **400 lines** (hard limit, checked by §3.2 #18). The threshold is universal to every slice file (`service.rs`, `controller.rs`, `repository.rs`, and so on), not limited to ingestion services.
-- **REQUIRED:** decompose by responsibility into dedicated sub-components within the slice: `command.rs` for orchestration commands, `pipeline.rs` for multi-step flows, `strategies/` for internal polymorphism, `repository/{queries,mutations,bulk}.rs` for split persistence, and a segmented `dto/` directory for large transport contracts. Keep `service.rs` as a thin orchestration facade.
+- **REQUIRED:** decompose by responsibility into dedicated sub-components within the slice: `command.rs` for orchestration commands, `pipeline.rs` for multi-step flows, `strategies/` for internal polymorphism, `repository/{queries,mutations,bulk}.rs` for split persistence, segmented `dto/` for large transport contracts, and optional `entity/` or `document/` directories (`mod.rs`, `root.rs`, `items.rs`, `mappers.rs`) when domain aggregates or BSON schemas grow. Keep `service.rs` as a thin orchestration facade.
 
 ### 16. Import Hygiene and Module Qualification
 
@@ -368,8 +369,8 @@ find src/modules -name "model.rs"
 # 12. No public internal modules in mod.rs
 grep -rnE "pub mod (model|repository|document|entity|controller);" src/modules --include="*.rs"
 
-# 13. No Command structs in dto.rs (find, not a `**` glob)
-find src/modules -name "dto.rs" -exec grep -HnE "struct .*Command" {} +
+# 13. No Command structs in dto (scans both dto.rs and dto/ directories)
+find src/modules \( -name "dto.rs" -o -path "*/dto/*.rs" \) -exec grep -HnE "struct .*Command" {} +
 
 # 14. No raw tuples returned from repository list queries
 grep -rnE "AppResult<\(Vec<.*>,\s*u64\)>" src/modules --include="*.rs"

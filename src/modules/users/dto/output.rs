@@ -1,31 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use validator::Validate;
 
-use super::entity::User;
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct CreateUserInput {
-    #[validate(length(min = 2, max = 100, message = "Name must be between 2 and 100 characters"))]
-    pub name: String,
-
-    #[validate(email(message = "Invalid email format"))]
-    pub email: String,
-}
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct UpdateUserInput {
-    #[validate(length(min = 2, max = 100, message = "Name must be between 2 and 100 characters"))]
-    pub name: String,
-
-    #[validate(email(message = "Invalid email format"))]
-    pub email: String,
-}
-
-pub use crate::core::pagination::{Paginated, PaginationQuery};
+use super::super::entity::User;
+use crate::core::pagination::Paginated;
 
 pub type PaginatedUsers = Paginated<UserOutput>;
 
+/// Contrato de salida con la representación pública de un usuario.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserOutput {
     pub id: String,

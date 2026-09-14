@@ -47,9 +47,9 @@ Todo desarrollo dentro de este servicio debe adherirse a los siguientes invarian
    Cada dominio centraliza sus componentes en `src/modules/<dominio>/`. Prohibido reintroducir capas horizontales globales (`src/domain/`, `src/controllers/`, `src/services/`).
 2. **La Tríada de Separación de Tipos (Anti-`model.rs`):**
    En entidades con persistencia, nunca mezclar las tres naturalezas de un dato:
-   - `dto.rs`: Transporte y validación sintáctica (`validator`, Axum). Prohibido contener lógica o comandos mutables.
-   - `entity.rs`: Reglas de negocio, invariantes y Value Objects subordinados (Rust puro, sin MongoDB ni BSON).
-   - `document.rs`: Persistencia BSON privada (`ObjectId`, `_id`, `deleted_at`).
+   - `dto.rs` (o directorio `dto/`): Transporte y validación sintáctica (`validator`, Axum). Prohibido contener lógica o comandos mutables. Segmentado en `input.rs`, `output.rs`, `query.rs` y anexos según necesidad.
+   - `entity.rs` (o directorio `entity/`): Reglas de negocio, invariantes y Value Objects subordinados (Rust puro, sin MongoDB ni BSON). Opcionalmente segmentado en `root.rs`, `items.rs`, `value_objects.rs`.
+   - `document.rs` (o directorio `document/`): Persistencia BSON privada (`ObjectId`, `_id`, `deleted_at`). Opcionalmente segmentado en `schema.rs`, `mappers.rs`, `subdocuments.rs`.
    - **PROHIBIDO:** crear un archivo comodín `model.rs` que colapse la tríada.
 3. **Encapsulamiento Forzado por Compilador:**
    Los detalles internos (`document`, `entity`, `repository`, `controller`) son privados (`pub(super)`) al módulo. La comunicación entre módulos se realiza exclusivamente invocando el `Service` público e intercambiando `Output DTOs`. Los métodos públicos de servicio nunca reciben ni retornan entidades de dominio (`entity.rs`).

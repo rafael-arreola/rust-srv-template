@@ -12,19 +12,19 @@ A module owns all its components under `src/modules/<module>/`. The internal fil
 
 For entities with their own database collection. Implements the Canonical Separation Triad (`AGENTS.md` §1.3.1).
 
-_Files:_ `mod.rs`, `controller.rs` (or `routes.rs`), `service.rs`, `repository.rs`, `entity.rs`, `document.rs`, `dto.rs`.
+_Files:_ `mod.rs`, `controller.rs` (or `routes.rs`), `service.rs`, `repository.rs`, `entity.rs` (or directory `entity/`), `document.rs` (or directory `document/`), `dto.rs` (or directory `dto/`).
 _Examples:_ `users`, `orders`.
 
-| File            | Responsibility                                                                                                           |
-| :-------------- | :----------------------------------------------------------------------------------------------------------------------- |
-| `dto.rs`        | HTTP transport boundary: inputs with `validator` rules, serializable outputs, and the `From<Entity> for Output` mappers. |
-| `entity.rs`     | Pure domain entity: business rules and invariants. No BSON, no MongoDB, no transport types.                              |
-| `document.rs`   | Private BSON storage schema with `from_domain` / `into_domain`.                                                          |
-| `repository.rs` | Collection access, idempotent index creation in `new(&db)`, soft-delete filtering.                                       |
-| `service.rs`    | Semantic validation and business orchestration. Returns output DTOs.                                                     |
-| `controller.rs` | Resource-relative routes, project extractors, `ApiResponse` envelope.                                                    |
+| File                 | Responsibility                                                                                                           |
+| :------------------- | :----------------------------------------------------------------------------------------------------------------------- |
+| `dto.rs` (or `dto/`) | HTTP transport boundary: inputs with `validator` rules, serializable outputs, and the `From<Entity> for Output` mappers. |
+| `entity.rs`          | Pure domain entity: business rules and invariants. No BSON, no MongoDB, no transport types.                              |
+| `document.rs`        | Private BSON storage schema with `from_domain` / `into_domain`.                                                          |
+| `repository.rs`      | Collection access, idempotent index creation in `new(&db)`, soft-delete filtering.                                       |
+| `service.rs`         | Semantic validation and business orchestration. Returns output DTOs.                                                     |
+| `controller.rs`      | Resource-relative routes, project extractors, `ApiResponse` envelope.                                                    |
 
-Add `command.rs` (`pub(super)`) when a flow needs internal orchestration state, and split `repository.rs`/`dto.rs` per §8 when the slice grows.
+Add `command.rs` (`pub(super)`) when a flow needs internal orchestration state, and split `repository.rs`/`dto/` per §8 when the slice grows.
 
 ### Archetype 2: Composite / Workflow Slice (multi-domain orchestrator)
 
@@ -316,9 +316,43 @@ The ~400-line threshold is **universal** to every file inside a slice (`service.
 | `strategies/`                            | Internal polymorphism, formatters, calculation/export engines.                 |
 | `repository/{queries,mutations,bulk}.rs` | Splitting read, write, and batch persistence concerns.                         |
 | `dto/` (segmented directory)             | Large transport contracts (`*Input`, `*Output`, `*Query`) grouped by resource. |
+| `entity/` (optional directory)           | Aggregates with rich invariants, subordinate child entities, or multiple VOs.  |
+| `document/` (optional directory)         | Complex BSON schemas with heavy bidirectional mappers (`mappers.rs`, etc.).    |
 | `csv.rs`                                 | Only when the slice ships its own parser. Optional, never promised.            |
 
 `service.rs` stays a thin orchestration facade. `dto.rs` and `dto/` contain only immutable serialization contracts; orchestration state belongs in `command.rs`.
+
+### DTO Directory Taxonomy (`src/modules/<name>/dto/`)
+
+When a slice handles standard CRUD, multiple query filters, or sub-resources, decompose `dto.rs` into a dedicated directory:
+
+- `mod.rs`: Re-exports all contracts cleanly (`pub use input::*; pub use output::*; pub use query::*;`).
+- `input.rs`: Inbound mutation payloads (`*Input`) deriving `Deserialize` and `Validate`.
+- `output.rs`: Outbound projection payloads (`*Output`) deriving `Serialize` and projection mappers (`impl From<Entity> for Output`).
+- `query.rs`: URL query string parameters (`*Query`), re-exporting or flattening `PaginationQuery`.
+- Sub-resource attachments (`items.rs`, `lines.rs`, `detail.rs`, `summary.rs`): Subordinate transport structures that prevent `input.rs` and `output.rs` from becoming monolithic.
+
+### Entity Directory Taxonomy (`src/modules/<name>/entity/`)
+
+When an aggregate root accumulates multiple Value Objects, validation rules, or subordinate child entities, decompose `entity.rs` into a dedicated directory:
+
+- `mod.rs`: Re-exports the aggregate root and Value Objects (`pub(super) mod entity;` in the slice's `mod.rs`).
+- `root.rs`: The Aggregate Root struct and primary business methods.
+- `items.rs` (or `<child>.rs`): Subordinate domain entities owned exclusively by the aggregate root.
+- `value_objects.rs`: Pure domain Value Objects with localized invariants.
+
+**Compiler invariant:** In `src/modules/<name>/mod.rs`, declare `pub(super) mod entity;`. The directory remains fully private to the slice and invisible to other modules.
+
+### Document Directory Taxonomy (`src/modules/<name>/document/`)
+
+When a MongoDB document schema grows with embedded sub-documents and extensive bidirectional mapping logic, decompose `document.rs` into a dedicated directory:
+
+- `mod.rs`: Re-exports the primary document schema and mappers (`pub(super) mod document;` in the slice's `mod.rs`).
+- `schema.rs`: BSON storage struct (`ObjectId`, `_id`, `deleted_at`).
+- `mappers.rs`: Bidirectional transformation functions (`from_domain` and `into_domain`).
+- `subdocuments.rs`: Embedded BSON representations for subordinate child entities.
+
+**Compiler invariant:** In `src/modules/<name>/mod.rs`, declare `pub(super) mod document;`. The private storage schema remains protected against cross-module imports (`error[E0603]`).
 
 ---
 
