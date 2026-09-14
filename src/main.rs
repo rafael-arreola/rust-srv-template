@@ -6,10 +6,11 @@ pub mod shared;
 pub mod vendors;
 
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use app::{AppContext, Application};
 use config::Env;
-use core::{AppResult, MongoProvider};
+use core::{AppError, AppResult, HttpClient, MongoProvider, RedisProvider};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -30,7 +31,7 @@ async fn main() -> ExitCode {
     };
 
     // Un arranque fallido debe terminar con código distinto de cero para que el orquestador
-    // (Cloud Run, Kubernetes) detecte el crash en lugar de interpretarlo como salida limpia.
+    // detecte el crash en lugar de interpretarlo como salida limpia.
     let exit_code = match run(env).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -51,7 +52,19 @@ async fn run(env: &'static Env) -> AppResult<()> {
     tracing::info!("Starting {} (env: {})", env.service_name, env.service_env);
 
     let mongo = MongoProvider::new(&env.service_name, &env.mongo_url, &env.mongo_db).await?;
-    let ctx = AppContext::new(mongo.database(), env)?;
+
+    // Redis es opcional en configuración; si se declara, un fallo de conexión es fatal.
+    let redis = match &env.redis_url {
+        Some(url) => Some(
+            RedisProvider::new(url, &env.redis_prefix)
+                .await
+                .map_err(|e| AppError::database(format!("Failed to connect to Redis: {e}")))?,
+        ),
+        None => None,
+    };
+
+    let http = Arc::new(HttpClient::try_new()?);
+    let ctx = AppContext::new(mongo.database(), redis, http);
 
     Application::serve(ctx).await
 }

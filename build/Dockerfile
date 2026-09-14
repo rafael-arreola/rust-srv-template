@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y lld clang && rm -rf /var/lib/apt/lists/
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
 
 # cargo-chef is installed once here so planner and cacher reuse this cached layer
-RUN cargo install cargo-chef
+RUN cargo install cargo-chef --version 0.1.71
 
 ####################################################################################################
 ## Planner Stage - generates the dependency recipe

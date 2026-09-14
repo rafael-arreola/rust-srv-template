@@ -76,31 +76,39 @@ Un error frecuente en el software es obligar a que todas las carpetas tengan exa
 
 ```text
 rust-srv-template/
-├── Cargo.toml                  # Configuración general del proyecto en Rust
-├── AGENTS.md                   # Directiva técnica detallada para desarrolladores y agentes IA
-├── docs/ARCHITECTURE.md        # Referencia de arquetipos, envelopes y estrategias de desacoplamiento
+├── Cargo.toml
+├── AGENTS.md                   # Directiva técnica vinculante (reglas y verificación)
+├── PROJECT.md                  # Brújula de negocio y catálogo de dominios
+├── docs/ARCHITECTURE.md        # Arquetipos, envelopes y estrategias de desacoplamiento
 │
 └── src/
-    ├── main.rs                 # Encendido y arranque del servidor
-    ├── app.rs                  # Ensamblado inicial de los componentes
-    ├── config.rs               # Carga de variables de entorno y puertos
+    ├── main.rs                 # Arranque, telemetría y ExitCode
+    ├── app.rs                  # Composition root: AppContext y wiring
+    ├── config.rs               # Variables de entorno tipadas (fail-fast)
     │
-    ├── core/                   # Herramientas técnicas generales (base de datos, logs, seguridad)
-    │
-    ├── shared/                 # Vocabulario común a todos los departamentos (países, monedas)
-    │
-    └── modules/                # Módulos de Negocio
-        ├── health/             # Monitor de salud del servicio (Arquetipo Lean)
-        ├── users/              # Gestión de usuarios y cuentas (Arquetipo Base CRUD)
-        ├── orders/             # Gestión de órdenes y pedidos (Arquetipo Base CRUD)
-        └── checkout/           # Orquestador del proceso de compra (Arquetipo Workflow)
+    ├── core/                   # Infraestructura (db, http, net, telemetry, auth, macros)
+    ├── shared/                 # Vocabulario compartido (países, monedas)
+    ├── vendors/                # Adaptadores a APIs externas
+    └── modules/                # Módulos de negocio
+        ├── health/             # Probes /healthz y /readyz (Arquetipo Lean)
+        ├── users/              # CRUD de usuarios (Arquetipo Stateful)
+        ├── orders/             # CRUD de órdenes (Arquetipo Stateful)
+        └── checkout/           # Orquestador multi-módulo (Arquetipo Composite)
 ```
+
+---
+
+## Autenticación (desconectada por defecto)
+
+`core::auth` (JWT/JWKS + RBAC) viene incluida en la plantilla, pero se entrega **desconectada**: ningún módulo de `src/modules/` ni el router la utilizan todavía.
+Para activarla, conéctala en el composition root (`src/app.rs`) siguiendo la guía de `docs/ARCHITECTURE.md` §6, sin acoplar los módulos de negocio a la capa técnica.
 
 ---
 
 ## Guía Rápida de Ejecución
 
 ### 1. Variables de Entorno
+El archivo `.env.example` documenta las variables requeridas y opcionales. Las tres requeridas son `SERVICE_NAME`, `MONGO_URL` y `MONGO_DB`.
 ```bash
 cp .env.example .env
 ```
@@ -112,8 +120,8 @@ cargo run
 
 ### 3. Verificar que Todo esté en Orden
 ```bash
-cargo check
-cargo test
-cargo clippy -- -D warnings
 cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo check --all-targets
+cargo test
 ```

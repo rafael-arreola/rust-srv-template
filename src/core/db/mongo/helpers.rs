@@ -68,27 +68,6 @@ impl<'de> Deserialize<'de> for ModelId {
     }
 }
 
-/// Deserializa opcionalmente un campo identificador que puede venir como `ObjectId` o como `String`.
-pub fn deserialize_optional_id_or_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Helper {
-        Oid(ObjectId),
-        Str(String),
-    }
-
-    let opt: Option<Helper> = Option::deserialize(deserializer)?;
-    Ok(opt.map(|h| match h {
-        Helper::Oid(oid) => oid.to_hex(),
-        Helper::Str(s) => s,
-    }))
-}
-
 /// Deserializa flexiblemente fechas que pueden venir en MongoDB como `Bson::DateTime`,
 /// `chrono::DateTime<Utc>` o String en formato RFC3339.
 pub fn deserialize_flexible_datetime<'de, D>(deserializer: D) -> Result<bson::DateTime, D::Error>

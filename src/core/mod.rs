@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod db;
 pub mod http;
 #[macro_use]
@@ -5,22 +6,25 @@ pub mod macros;
 pub mod net;
 pub mod telemetry;
 
-// Backward-compatible module aliases
+// Rutas cortas canónicas para las familias de transporte HTTP y telemetría.
 pub use http::error;
 pub use http::extractors;
-pub use http::middleware;
 pub use http::pagination;
 pub use http::response;
 pub use http::server;
-pub use net::client as http_client;
 pub use telemetry::tracer;
 
 // Direct type re-exports
-pub use db::{MongoProvider, RedisProvider};
-pub use http::{
-    ApiResponse, AppError, AppResult, ContextExt, ErrorKind, ErrorSeverity, GenericApiResponse,
-    GenericPagination, Paginated, PaginatedResponse, PaginationQuery, PathParam, ServerLauncher,
-    ValidatedBody, ValidatedQuery,
+pub use auth::{
+    AuthPrincipal, AuthProvider, JwtJwksAuthProvider, JwtJwksClaims, TaskToken, auth_middleware,
+    extract_bearer_token, require_any_permission, require_permission, task_auth_middleware,
 };
-pub use net::{client_with_timeout, instrumented_client};
+pub use db::{MongoProvider, QueryResult, RedisProvider};
+pub use http::{
+    ApiResponse, AppError, AppResult, CONTENT_TYPE_MSGPACK, ContextExt, ErrorKind, ErrorSeverity,
+    MessageOutput, MsgPack, Paginated, PaginationQuery, PathParam, ServerLauncher,
+    TaskSuccessOutput, ValidatedBody, ValidatedQuery, is_msgpack_content_type,
+    wants_msgpack_response,
+};
+pub use net::{APP_USER_AGENT, HttpClient, client_with_timeout, instrumented_client};
 pub use telemetry::{TracerGuard, init_tracing};

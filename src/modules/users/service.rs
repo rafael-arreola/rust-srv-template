@@ -40,11 +40,10 @@ impl UserService {
 
     #[tracing::instrument(skip_all)]
     pub async fn list_users(&self, query: &PaginationQuery) -> AppResult<PaginatedUsers> {
-        let users = self.repo.find_all(query.skip(), i64::from(query.limit())).await?;
-        let total = self.repo.count().await?;
+        let res = self.repo.list(query.skip(), query.limit()).await?;
 
-        let outputs = users.into_iter().map(Into::into).collect();
-        Ok(Paginated::new(outputs, total, query.page(), query.limit()))
+        let outputs = res.items.into_iter().map(Into::into).collect();
+        Ok(Paginated::new(outputs, res.total, query.page(), query.limit()))
     }
 
     #[tracing::instrument(skip_all, fields(%id))]

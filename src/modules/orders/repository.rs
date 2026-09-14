@@ -28,6 +28,12 @@ impl OrderRepository {
                     IndexOptions::builder().name("orders_user_created_idx".to_string()).build(),
                 )
                 .build(),
+            IndexModel::builder()
+                .keys(doc! { "deleted_at": 1, "created_at": -1 })
+                .options(
+                    IndexOptions::builder().name("orders_deleted_created_idx".to_string()).build(),
+                )
+                .build(),
         ];
 
         self.collection.create_indexes(indexes).await?;

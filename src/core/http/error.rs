@@ -389,6 +389,18 @@ impl AppError {
         .into()
     }
 
+    pub fn already_exists(entity: &'static str, details: impl Into<String>) -> Self {
+        ErrorKind::AlreadyExists { entity, details: details.into() }.into()
+    }
+
+    pub fn invalid(field: &'static str, reason: impl Into<String>) -> Self {
+        ErrorKind::Invalid { field, reason: reason.into() }.into()
+    }
+
+    pub fn required(field: &'static str) -> Self {
+        ErrorKind::Required { field }.into()
+    }
+
     pub fn invalid_param(
         param: &'static str,
         entity: &'static str,

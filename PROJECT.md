@@ -63,8 +63,8 @@ Todo desarrollo dentro de este servicio debe adherirse a los siguientes invarian
    Los tipos de negocio compartidos (`Country`, `Currency`, value objects) viven en `src/shared/` con orden de dependencias `core ← shared ← modules, vendors`. Solo tipos puros con representación serde estable; sin servicios, repositorios ni I/O. Regla de dos consumidores y política aditiva para variantes persistidas.
 8. **Cero Estructuras Pasajeras ni DTOs Mutables:**
    Prohibido declarar comandos mutables en `dto.rs` con `raw_payload`, métodos de dominio o mutaciones de estado en vuelo. Prohibido definir estructuras efímeras con tiempos de vida (`struct Assembly<'a>`) en servicios o repositorios para agrupar parámetros.
-9. **Descomposición de Slices Masivos / Ingesta:**
-   Prohibidos los servicios monolíticos (>400 líneas) que concentren parseo de CSV, particionamiento en chunks, encolamiento en cloud tasks y persistencia. Se descomponen en subcomponentes dedicados (`csv.rs`, `pipeline.rs`).
+9. **Descomposición de Slices Masivos:**
+   Prohibido cualquier archivo de slice por encima de ~400 líneas (umbral universal), no solo los de ingesta. Se descompone por responsabilidad en subcomponentes dentro del slice (`pipeline.rs`, `command.rs`, `strategies/`, repositorios divididos, `dto/` segmentado). El parseo propio se aísla en `csv.rs` solo cuando existe parser propio.
 
 ---
 
@@ -79,11 +79,19 @@ Cuando se solicite implementar una nueva capacidad, aplicar este árbol de decis
 - **¿Es un endpoint técnico, probe o webhook ligero sin reglas complejas?**
   $\rightarrow$ Crear **Arquetipo 3: Lean / Gateway Slice** (`controller`, `mod`).
 - **¿Es una tarea en background, cron job o consumidor de eventos?**
-  $\rightarrow$ Crear **Arquetipo 4: Worker / Consumer Slice** (`consumer`, `service`, `mod`).
-- **¿Es una ingesta masiva de archivos (CSV), procesamiento en chunks o tareas encoladas?**
-  $\rightarrow$ Crear **Arquetipo 5: Bulk / Ingestion Pipeline Slice** (`dto`, `csv`, `pipeline`, `entity`, `document`, `repository`, `service`, `controller`, `mod`).
+  $\rightarrow$ Distinguir por el disparador: **Arquetipo 4a: Internal Consumer Slice** (canales `broadcast`/`mpsc`, sin HTTP) o **Arquetipo 4b: HTTP Push Worker Slice** (Cloud Tasks/webhook, `controller.rs` con token interno fuera del prefijo público). Ver `docs/ARCHITECTURE.md` §1.
+- **¿Es una ingesta masiva de archivos, procesamiento en chunks o tareas encoladas?**
+  $\rightarrow$ Crear **Arquetipo 5: Bulk / Ingestion Pipeline Slice** (`dto`, `pipeline`, `entity`, `document`, `repository`, `service`, `controller`, `mod`, más `strategies/` si aplica). `csv.rs` solo si el slice tiene parser propio.
 - **¿Es una integración con una API externa (ej. pasarelas, SMS, carriers)?**
-  $\rightarrow$ Crear un adaptador en `src/vendors/<nombre>/` con `instrumented_client()` y error mapping.
+  $\rightarrow$ Crear un adaptador en `src/vendors/<nombre>/` que reciba el `Arc<HttpClient>` inyectado desde el composition root, con error mapping a `AppError`.
+- **¿La capacidad es autenticación, RBAC o resolución del principal?**
+  $\rightarrow$ Usar la familia `core::auth` (`AuthProvider`, `AuthPrincipal`, `auth_middleware`, `require_permission`, `task_auth_middleware`), que viene **desconectada** por defecto; nunca un módulo de dominio ni lógica en el `service`.
+- **¿El handler necesita el principal o el país de la petición?**
+  $\rightarrow$ El middleware de contexto de petición valida e inyecta; el `controller.rs` extrae con extractores tipados y pasa primitivos al `service`. El `service` jamás lee `extensions`. Ver `docs/ARCHITECTURE.md` §6.
+- **¿Un `new()` de módulo supera ~4 argumentos de dependencia?**
+  $\rightarrow$ Agruparlos en un `XModuleDeps` owned e inyectar; nunca `#[allow(clippy::too_many_arguments)]`.
+- **¿Una consulta de repositorio devuelve elementos + total?**
+  $\rightarrow$ Usar `QueryResult<T>` de `crate::core::db`; `Paginated<T>` es transporte HTTP y se arma fuera del repositorio.
 - **¿Es un tipo de vocabulario (enum de catálogo cerrado o value object) que usan dos o más módulos, o un módulo y un vendor?**
   $\rightarrow$ Colocarlo en `src/shared/` agrupado por concepto (`geo.rs`, `money.rs`, `contact.rs`) y registrarlo en la sección 2.1. Con un solo consumidor permanece en ese módulo. Con ciclo de vida o persistencia propios, es un módulo.
 - **¿Dónde van las rutas?**
@@ -94,3 +102,5 @@ Cuando se solicite implementar una nueva capacidad, aplicar este árbol de decis
 ## 5. Protocolo de Mantenimiento Continuo
 
 Cada vez que un agente o desarrollador incorpore, elimine o refactorice un módulo de dominio, un vendor o un tipo del Shared Kernel en el servicio real, **DEBE actualizar sintéticamente las secciones 2 y 2.1 de este archivo** en la misma entrega atómica.
+
+Además, si el cambio introduce, elimina o modifica un arquetipo o un layout de slice (archivos internos, prefijos de router, patrones de descomposición), **DEBE actualizar también `docs/ARCHITECTURE.md`** en la misma entrega. Este archivo es la brújula de negocio: las reglas técnicas vinculantes viven en `AGENTS.md`, no aquí.

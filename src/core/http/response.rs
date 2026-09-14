@@ -8,7 +8,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub use super::pagination::{GenericPagination, Paginated, PaginatedResponse};
+pub use super::pagination::Paginated;
 
 /// Type-erased handle to the original response value, stored in the response
 /// extensions so MessagePack negotiation can encode it once directly.
@@ -21,6 +21,30 @@ pub struct ErrorDetail {
 
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub breadcrumbs: Vec<String>,
+}
+
+/// Acuse de recibo de un worker o tarea asíncrona con un mensaje descriptivo.
+#[derive(Debug, Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
+pub struct MessageOutput {
+    pub message: String,
+}
+
+impl MessageOutput {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self { message: message.into() }
+    }
+}
+
+/// Acuse de recibo booleano para tareas de worker que solo reportan éxito.
+#[derive(Debug, Serialize, serde::Deserialize, Clone, PartialEq, Eq)]
+pub struct TaskSuccessOutput {
+    pub success: bool,
+}
+
+impl TaskSuccessOutput {
+    pub fn ok() -> Self {
+        Self { success: true }
+    }
 }
 
 /// Standard HTTP envelope:
@@ -124,16 +148,13 @@ impl ApiResponse<ErrorDetail> {
     }
 }
 
-impl<T: Serialize> ApiResponse<PaginatedResponse<T>> {
-    pub fn paginated(data: Vec<T>, total: u64, page: u32, limit: u32) -> Self {
+impl<T: Serialize> ApiResponse<Paginated<T>> {
+    pub fn paginated(data: Vec<T>, total: u64, page: u64, limit: u64) -> Self {
         Self {
             trace_id: Self::current_trace_id(),
-            data: Some(PaginatedResponse::new(data, total, page, limit)),
+            data: Some(Paginated::new(data, total, page, limit)),
             cause: None,
             status: StatusCode::OK,
         }
     }
 }
-
-/// Alias para soporte de código preexistente
-pub type GenericApiResponse<T> = ApiResponse<T>;

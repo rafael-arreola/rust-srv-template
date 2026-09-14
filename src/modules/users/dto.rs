@@ -22,7 +22,7 @@ pub struct UpdateUserInput {
     pub email: String,
 }
 
-pub use crate::core::pagination::{Paginated, PaginatedResponse, PaginationQuery};
+pub use crate::core::pagination::{Paginated, PaginationQuery};
 
 pub type PaginatedUsers = Paginated<UserOutput>;
 

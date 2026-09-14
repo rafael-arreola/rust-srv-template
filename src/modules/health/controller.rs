@@ -1,5 +1,5 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
-use mongodb::Database;
+use mongodb::{Database, bson};
 
 use crate::core::http::shutdown::is_draining;
 

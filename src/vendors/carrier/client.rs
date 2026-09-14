@@ -1,19 +1,20 @@
-use reqwest_middleware::ClientWithMiddleware;
+use std::sync::Arc;
 
 use super::dto::{CreateShipmentInput, ShipmentResponse};
 use crate::core::error::{AppError, AppResult};
+use crate::core::net::HttpClient;
 
 /// Cliente HTTP instrumentado para interactuar con la API del Carrier externo.
 #[derive(Clone)]
 pub struct CarrierClient {
-    client: ClientWithMiddleware,
+    client: Arc<HttpClient>,
     base_url: String,
     api_key: Option<String>,
 }
 
 impl CarrierClient {
     pub fn new(
-        client: ClientWithMiddleware,
+        client: Arc<HttpClient>,
         base_url: impl Into<String>,
         api_key: Option<String>,
     ) -> Self {

@@ -1,6 +1,6 @@
 # Architecture Reference
 
-Consultative companion to `AGENTS.md`. Load this file when designing a new module, a nested submodule, a response contract, or an interaction between two domains. The binding rules live in `AGENTS.md`; this file holds the layouts, examples, and selection criteria that support them.
+Consultative companion to `AGENTS.md`. Load this file when designing a new module, a nested submodule, a response contract, an interaction between two domains, or the composition root. The binding rules live in `AGENTS.md`; this file holds the layouts, examples, and selection criteria that support them.
 
 ---
 
@@ -24,13 +24,15 @@ _Examples:_ `users`, `orders`.
 | `service.rs`    | Semantic validation and business orchestration. Returns output DTOs.                                                     |
 | `controller.rs` | Resource-relative routes, project extractors, `ApiResponse` envelope.                                                    |
 
+Add `command.rs` (`pub(super)`) when a flow needs internal orchestration state, and split `repository.rs`/`dto.rs` per §8 when the slice grows.
+
 ### Archetype 2: Composite / Workflow Slice (multi-domain orchestrator)
 
 For business flows coordinated across two or more base modules.
 
 _Files:_ `mod.rs`, `controller.rs`, `workflow.rs` (or `service.rs`), `dto.rs`.
 _Example:_ `checkout`.
-_Strict rule:_ including `document.rs` or `repository.rs` is **FORBIDDEN**. Persistence is delegated through the injected base services.
+_Strict rule:_ including `document.rs` or `repository.rs` is **FORBIDDEN**. Persistence is delegated through the injected base services. The orchestrator accesses neither the base modules' repositories/documents nor their entities, and never writes their persistence.
 
 ### Archetype 3: Lean / Gateway Slice (transport, utility)
 
@@ -39,24 +41,37 @@ For technical endpoints, webhooks, or probes with no complex domain rules and no
 _Files:_ `mod.rs`, `controller.rs` (or `handlers.rs`).
 _Example:_ `health`.
 
-### Archetype 4: Worker / Consumer Slice (async processing)
+A Lean slice may hold a single injected live resource (for example the MongoDB handle) as erased router state via `.with_state(resource)`; this is not the monolithic `AppState` that `AGENTS.md` Guardrail 10 forbids. A slice holds at most one resource this way; anything richer becomes a `service.rs` state.
 
-For background tasks, cron jobs, or listeners on internal channels (`tokio::sync::broadcast`) with no HTTP surface.
+### Archetype 4a: Internal Consumer Slice (async, no HTTP surface)
+
+For background tasks, cron jobs, or reactive listeners on internal channels (`tokio::sync::broadcast` / `mpsc`). It emits and consumes typed events and exposes no route of its own.
 
 _Files:_ `mod.rs`, `consumer.rs` (or `worker.rs`), `service.rs`, `dto.rs`.
 
-### Archetype 5: Bulk / Ingestion Pipeline Slice (batch ingestion, CSV, chunking)
+### Archetype 4b: HTTP Push Worker Slice (Cloud Tasks / provider webhook)
+
+For tasks delivered over HTTP by an external scheduler (Cloud Tasks, Cloud Scheduler) or a provider webhook. It **does** expose a `controller.rs`, mounted on its own prefix and protected by an internal task token instead of user authentication.
+
+_Files:_ `mod.rs`, `controller.rs`, `service.rs`, `dto.rs`.
+_Strict isolation:_ the endpoint validates the internal token through a dedicated `core` middleware/extractor (see §6), lives outside the public `/api/v1` surface, and delegates any persistence to the services it coordinates.
+
+> Rule of thumb: if the trigger arrives through a channel, it is 4a; if it arrives through an HTTP request, it is 4b. HTTP presence alone does not make a slice "Archetype 1" or "Archetype 3".
+
+### Archetype 5: Bulk / Ingestion Pipeline Slice (batch ingestion, chunking)
 
 For modules that process large batch files (CSV/JSON), divide records into chunks, dispatch cloud/background tasks, and track session progress (e.g. `imports`, `transitions`).
 
-_Files:_ `mod.rs`, `controller.rs`, `service.rs`, `pipeline.rs`, `csv.rs`, `repository.rs`, `entity.rs`, `document.rs`, `dto.rs`.
-_Strict decomposition rule:_ CSV parsing logic belongs strictly in `csv.rs`. Chunking, payload generation, and background task enqueuing belong in `pipeline.rs`. `service.rs` acts only as a high-level orchestrator coordinating session creation and pipeline triggers, avoiding 700+ line god-files.
+_Files:_ `mod.rs`, `controller.rs`, `service.rs`, `pipeline.rs`, `repository.rs`, `entity.rs`, `document.rs`, `dto.rs`; add `strategies/` for internal polymorphism.
+
+_Decomposition rule:_ chunking, payload generation, and background task enqueuing belong in `pipeline.rs`. `strategies/` is valid and expected when the slice formats or transforms records polymorphically. **`csv.rs` is optional**: create it only when the slice ships its own parser; if parsing is delegated to a vendor or existing utility, do not add the file. `service.rs` acts only as a high-level orchestrator coordinating session creation and pipeline triggers, never as a god-file.
 
 ### Semantic naming guide
 
 - `controller.rs` versus `handlers.rs` / `routes.rs`: use `routes.rs` or `handlers.rs` when the module is lightweight or purely functional in style.
 - `service.rs` versus `workflow.rs` / `usecase.rs`: use `workflow.rs` or `usecase.rs` in orchestrating modules to denote a coordinated multi-step process.
 - `dto.rs` versus `contract.rs`: use `contract.rs` when the file defines stable inter-module exchange agreements.
+- `command.rs`: internal orchestration commands and multi-step pipeline state, private to the slice (`pub(super)`).
 
 ---
 
@@ -77,7 +92,7 @@ Every API response is one of four `ApiResponse<T>` shapes (`AGENTS.md` §1.3.4).
 
 ### Paginated success
 
-`ApiResponse::paginated(items, total, page, limit)`, returning `Paginated<T>` (alias `PaginatedResponse<T>`). `total_pages` is computed with `(total).div_ceil(limit)`:
+`ApiResponse::paginated(items, total, page, limit)`, returning `Paginated<T>`. `total_pages` is computed with `(total).div_ceil(limit)`. Pagination is always `page`/`limit: u64`.
 
 ```json
 {
@@ -129,13 +144,13 @@ When two domains must interact, pick exactly one strategy based on business sema
 
 **Implementation.** Create an independent vertical module in `src/modules/<orchestrator>/` whose `new()` receives the concrete services `Arc<AService>` and `Arc<BService>`.
 
-**Strict isolation.** The orchestrator may call only public **service** methods and consume public **output DTOs**. Accessing repositories, MongoDB collections, or internal BSON models of the coordinated modules is **FORBIDDEN**.
+**Strict isolation.** The orchestrator may call only public **service** methods and consume public **output DTOs**. Accessing repositories, MongoDB collections, BSON models, or domain entities of the coordinated modules is **FORBIDDEN**.
 
 **Resulting topology.** A directed acyclic graph: `Orchestrator -> A` and `Orchestrator -> B`. Modules `A` and `B` stay fully decoupled and remain unaware of each other and of the orchestrator.
 
 ### Strategy 2: Internal event channels (temporal decoupling)
 
-**When it applies.** The interaction is reactive or a side effect (notifications, auditing, statistics recalculation, cache invalidation) where the emitter needs no immediate result and does not condition its flow on the receiver.
+**When it applies.** The interaction is reactive or a side effect (notifications, auditing, statistics recalculation, cache invalidation) where the emitter needs no immediate result and does not condition its flow on the receiver. Pairs with Archetype 4a.
 
 **Implementation.** In-memory `tokio::sync::broadcast` or `mpsc` channels created in `AppContext` or during startup. The emitter publishes; interested modules subscribe during their initialization. Zero type imports between modules.
 
@@ -149,7 +164,7 @@ When two domains must interact, pick exactly one strategy based on business sema
 
 ## 4. Nested Submodule Typologies
 
-When an aggregate root groups subordinate concepts that do not justify a top-level module, nest at **exactly one level**: `src/modules/<parent>/<child>/` (`AGENTS.md` §1.3.9 and Guardrail 4).
+When an aggregate root groups subordinate concepts that do not justify a top-level module, nest at **exactly one level**: `src/modules/<parent>/<child>/` (`AGENTS.md` §1.3.8 and Guardrail 4).
 
 ### Typology 1: Domain Strategy Sub-Slice
 
@@ -168,6 +183,8 @@ _Composable routing:_ the global router (`src/modules/router.rs`) mounts **only*
 ### Single facade rule
 
 The parent module is always the aggregate's only public face. If an external module needs a contract from the nested submodule, the parent re-exports it explicitly in its `mod.rs`, for example `pub use documents::{DocumentPayload, ManifestDocumentType};`.
+
+Re-exports are limited to explicit contracts. `pub use entity::...` or `pub use repository::...` in `mod.rs` is **FORBIDDEN** because it annuls the `pub(super)` compiler guardrail; cross-module projections are exposed through a dedicated `contract.rs`.
 
 ---
 
@@ -198,18 +215,131 @@ Multi-field search filters and database criteria must never leak HTTP or MongoDB
        pub limit: i64,
    }
    ```
-3. **Repository result contract:** never return untyped raw tuples `AppResult<(Vec<T>, u64)>`. Return a typed query result:
+3. **Repository result contract:** never return untyped raw tuples `AppResult<(Vec<T>, u64)>`. `QueryResult<T>` is a core persistence type in `crate::core::db` (not `core::http`) and is reused by repositories:
+
    ```rust
-   pub(super) struct QueryResult<T> {
-       pub items: Vec<T>,
-       pub total: u64,
-   }
+   use crate::core::db::QueryResult;
+
+   pub(super) async fn list(&self, criteria: OrderCriteria) -> AppResult<QueryResult<Order>> { ... }
    ```
-   The service maps `QueryResult<Entity>` into the public transport `Paginated<OutputDto>`.
+
+   `QueryResult<T>` carries `{ items: Vec<T>, total: u64 }`. The service maps `QueryResult<Entity>` into the public transport `Paginated<OutputDto>`. `Paginated<T>` is an HTTP transport shape and must never cross the repository boundary.
 
 ---
 
-## 6. Anti-Patterns and Code Smells Catalog (The "Don'ts")
+## 6. Request Context & Authentication
+
+Authentication and RBAC are a `core` capability, never a domain module.
+
+### `core::auth` surface (shipped, not wired)
+
+The template ships this capability **disconnected**: no module or router uses it until you wire it. Public surface: `AuthProvider` (port), `AuthPrincipal` (with a typed `FromRequestParts` extractor), `JwtJwksAuthProvider`/`JwtJwksClaims`, `auth_middleware`, `task_auth_middleware`, `TaskToken`, `require_permission`, `require_any_permission`, and `extract_bearer_token`.
+
+Wiring steps (composition root only):
+
+1. Install the `jsonwebtoken` crypto provider once at startup, before constructing any provider.
+2. Build `Arc<dyn AuthProvider>`, for example `JwtJwksAuthProvider::new(jwks_url, allowed_client_ids).await?`.
+3. Layer `auth_middleware` on the protected prefix: `.layer(from_fn_with_state(provider, auth_middleware))`.
+4. Apply `require_permission`/`require_any_permission` per route; controllers read `AuthPrincipal` through the extractor.
+
+Unwired `core::auth` items are reachable `pub` surface (no `dead_code` by design), so the capability is opt-in with zero effect until step 2 exists.
+
+### Request pipeline
+
+1. An inbound middleware validates the credentials and injects the resolved **principal** (identity plus roles) and the operational **country** into the request context.
+2. The `controller.rs` extracts them with typed extractors from `core::http::extractors` (alongside `body.rs`, `query.rs`, `path.rs`, `msgpack.rs`).
+3. The controller passes **primitives** (for example `user_id: String`, `country: Country`) to the service.
+4. The service **NEVER** reads `extensions`: it receives everything it needs as explicit arguments.
+
+### RBAC
+
+Route-level authorization belongs to `core` middleware/router layers. A domain module consumes the principal through an extractor; it never parses raw headers, resolves tokens, or implements authorization rules.
+
+### Internal task token (Archetype 4b)
+
+HTTP push workers are protected by an internal task token validated by a dedicated `core` middleware/extractor. This is not user authentication: it authorizes the scheduler/webhook caller and never lives on the public `/api/v1` prefix (see §9).
+
+### Forbidden
+
+- Reading `extensions` from a service.
+- Parsing `Authorization` or equivalent headers inside `controller.rs` or a domain module.
+- Placing authentication, RBAC, or principal types in `src/modules/`.
+- Generating or propagating `x-request-id`; correlation is W3C `traceparent`/`trace_id` only.
+
+---
+
+## 7. Composition Root & DI
+
+The composition root (`src/app.rs` plus `src/main.rs`) owns wiring; it contains zero business logic.
+
+### What lives in `AppContext`
+
+`AppContext` holds only **live resources**:
+
+- `db: Database` (MongoDB pool).
+- `redis: Option<RedisProvider>` (present only when `REDIS_URL` is declared).
+- `http: Arc<HttpClient>` (the single instrumented client).
+
+Configuration is not stored in `AppContext`: it is read through `config::get()`. Injecting `&Env` into modules is **FORBIDDEN**.
+
+### Startup order
+
+1. `config` load with `require_env`/`require_env_parsed` (fail-fast; optional defaults only through a visible helper).
+2. Single rustls crypto provider installed in `main`; minimal Tokio feature set.
+3. Telemetry initialization.
+4. MongoDB connection pool.
+5. Optional Redis: if declared, a connection failure is fatal (`ExitCode::FAILURE`).
+6. `HttpClient::try_new() -> AppResult<Self>`; a construction failure is fatal and never degraded to a client without timeouts.
+7. `AppContext` assembled with the live resources above.
+8. Vendors constructed, each receiving the shared `Arc<HttpClient>`.
+9. Modules resolved in `Modules::init(&ctx)` (base leaves before orchestrators).
+10. Router tree composed and fallbacks registered last.
+
+Any failure in this sequence returns `ExitCode::FAILURE`; it is never logged and swallowed as a successful start.
+
+### Dependency injection style
+
+- Constructor injection in `new()` with concrete `Arc<T>`; `Arc<dyn Trait>` only inside the closed exception list (`AGENTS.md` Guardrail 11).
+- When a slice's `new()` exceeds roughly four dependency arguments, group them in an owned `XModuleDeps` struct (live resources/services only) instead of `#[allow(clippy::too_many_arguments)]`.
+- Vendors are built before modules; modules receive `Arc<Vendor>` and `Arc<OtherService>` explicitly.
+
+---
+
+## 8. Large Slice Decomposition
+
+The ~400-line threshold is **universal** to every file inside a slice (`service.rs`, `controller.rs`, `repository.rs`, `command.rs`, and so on), not exclusive to ingestion services. When a file approaches it, split by responsibility inside the same slice:
+
+| Pattern                                  | Use it for                                                                     |
+| :--------------------------------------- | :----------------------------------------------------------------------------- |
+| `command.rs`                             | Internal orchestration commands and multi-step pipeline state (`pub(super)`).  |
+| `pipeline.rs`                            | Multi-step flows: chunking, payload generation, task enqueuing.                |
+| `strategies/`                            | Internal polymorphism, formatters, calculation/export engines.                 |
+| `repository/{queries,mutations,bulk}.rs` | Splitting read, write, and batch persistence concerns.                         |
+| `dto/` (segmented directory)             | Large transport contracts (`*Input`, `*Output`, `*Query`) grouped by resource. |
+| `csv.rs`                                 | Only when the slice ships its own parser. Optional, never promised.            |
+
+`service.rs` stays a thin orchestration facade. `dto.rs` and `dto/` contain only immutable serialization contracts; orchestration state belongs in `command.rs`.
+
+---
+
+## 9. Multi-Router Composition
+
+A service may expose several orthogonal prefixes with different policies:
+
+- `/api/v1`: public API surface, user authentication and RBAC.
+- `/internal/tasks`: HTTP push workers (Archetype 4b), internal task token, no user auth.
+- `/`: probes and technical endpoints (Archetype 3).
+
+Composition rules:
+
+1. `src/modules/router.rs` owns prefix composition; `controller.rs` declares only resource-relative routes (`/`, `/{id}`).
+2. Each prefix is assembled from its modules' routers; policies (auth, token, rate/size limits) are attached per prefix, not per module.
+3. Subroutes of an aggregate belong to the aggregate's owning module. For example, `/{id}/manifests` is owned and merged by `manifests`, never patched from a leaf module that merely consumes it.
+4. The composition root registers `fallback::not_found` and `method_not_allowed_fallback` **after** the whole tree is mounted, so every 404/405 stays inside the uniform envelope.
+
+---
+
+## 10. Anti-Patterns and Code Smells Catalog (The "Don'ts")
 
 Based on real-world production drift, these patterns violate the repository architecture and must be actively avoided:
 
@@ -223,13 +353,13 @@ Based on real-world production drift, these patterns violate the repository arch
 
 - **Symptom:** creating `*Command` structs in `dto.rs` that store `raw_payload: Option<Value>`, contain domain conversion methods (`get_country()`, `to_manifest_data()`), or mutate fields across service steps.
 - **Consequence:** turns DTOs into stateful staging bags, mixing HTTP transport with domain and infrastructure logic.
-- **Correction:** `dto.rs` contains only immutable serialization contracts (`*Input`, `*Output`, `*Query`). Multi-step orchestration belongs in domain services or dedicated pipeline builders.
+- **Correction:** `dto.rs` contains only immutable serialization contracts (`*Input`, `*Output`, `*Query`). Multi-step orchestration belongs in a private `command.rs` or a dedicated pipeline builder.
 
 ### Anti-Pattern 3: Ephemeral Lifetime Structs in Services
 
 - **Symptom:** defining ad-hoc structs with borrowed lifetimes (such as `struct OrderAssembly<'a>`) at the top of `service.rs` merely to bundle function arguments or silence clippy.
 - **Consequence:** hides poor encapsulation and creates artificial procedural glue.
-- **Correction:** use typed Domain Value Objects, entity builders (`Entity::builder()`), or sub-components within the slice.
+- **Correction:** use typed Domain Value Objects, entity builders (`Entity::builder()`), owned `XModuleDeps` for constructor dependencies, or sub-components within the slice.
 
 ### Anti-Pattern 4: Domain Entity Leakage Across Services
 
@@ -239,6 +369,6 @@ Based on real-world production drift, these patterns violate the repository arch
 
 ---
 
-## 7. Capability Decision Guide
+## 11. Capability Decision Guide
 
 The decision tree for "where does this new capability go" lives in `PROJECT.md` §4, which is the business-facing compass and the single source of truth for that question. Do not duplicate it here.

@@ -1,5 +1,6 @@
 pub mod client;
 
 pub use client::{
-    DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, client_with_timeout, instrumented_client,
+    APP_USER_AGENT, DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, HttpClient, client_with_timeout,
+    instrumented_client,
 };

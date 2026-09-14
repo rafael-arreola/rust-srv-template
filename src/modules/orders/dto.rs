@@ -4,7 +4,7 @@ use validator::Validate;
 
 use super::entity::Order;
 
-pub use crate::core::pagination::{Paginated, PaginatedResponse, PaginationQuery};
+pub use crate::core::pagination::{Paginated, PaginationQuery};
 
 pub type PaginatedOrders = Paginated<OrderOutput>;
 

@@ -7,6 +7,7 @@ use mongodb::{
 
 use super::document::UserDocument;
 use super::entity::User;
+use crate::core::db::query::QueryResult;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
@@ -79,25 +80,23 @@ impl UserRepository {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn find_all(&self, skip: u64, limit: i64) -> AppResult<Vec<User>> {
+    pub async fn list(&self, skip: u64, limit: u64) -> AppResult<QueryResult<User>> {
+        let filter = doc! { "deleted_at": { "$exists": false } };
+
         let cursor = self
             .collection
-            .find(doc! { "deleted_at": { "$exists": false } })
+            .find(filter.clone())
             .skip(skip)
-            .limit(limit)
+            .limit(limit as i64)
             .sort(doc! { "created_at": -1 })
             .await?;
 
         let docs: Vec<UserDocument> = cursor.try_collect().await?;
+        let items = docs.into_iter().map(UserDocument::into_domain).collect();
 
-        Ok(docs.into_iter().map(UserDocument::into_domain).collect())
-    }
+        let total = self.collection.count_documents(filter).await?;
 
-    #[tracing::instrument(skip_all)]
-    pub async fn count(&self) -> AppResult<u64> {
-        let total =
-            self.collection.count_documents(doc! { "deleted_at": { "$exists": false } }).await?;
-        Ok(total)
+        Ok(QueryResult::new(items, total))
     }
 
     #[tracing::instrument(skip_all)]

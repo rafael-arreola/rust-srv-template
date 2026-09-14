@@ -1,4 +1,7 @@
+use redis::AsyncCommands;
 use redis::aio::MultiplexedConnection;
+
+use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
 pub struct RedisProvider {
@@ -28,7 +31,39 @@ impl RedisProvider {
         self.connection.clone()
     }
 
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
     pub fn key(&self, parts: &[&str]) -> String {
-        format!("{}:{}", self.prefix, parts.join(":"))
+        let joined = parts.join(":");
+        if self.prefix.is_empty() { joined } else { format!("{}:{}", self.prefix, joined) }
+    }
+
+    /// Obtiene el valor asociado a una clave. Retorna `None` si la clave no existe.
+    pub async fn get(&self, key: &str) -> AppResult<Option<String>> {
+        let mut conn = self.connection.clone();
+        let value: Option<String> = conn.get(key).await.map_err(|e| {
+            AppError::external_service("redis", format!("failed to get {key}: {e}"))
+        })?;
+        Ok(value)
+    }
+
+    /// Establece una clave con expiración en segundos.
+    pub async fn set_ex(&self, key: &str, value: &str, ttl_seconds: u64) -> AppResult<()> {
+        let mut conn = self.connection.clone();
+        let _: () = conn.set_ex(key, value, ttl_seconds).await.map_err(|e| {
+            AppError::external_service("redis", format!("failed to set {key}: {e}"))
+        })?;
+        Ok(())
+    }
+
+    /// Elimina una clave.
+    pub async fn del(&self, key: &str) -> AppResult<()> {
+        let mut conn = self.connection.clone();
+        let _: () = conn.del(key).await.map_err(|e| {
+            AppError::external_service("redis", format!("failed to delete {key}: {e}"))
+        })?;
+        Ok(())
     }
 }

@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::State,
-    http::{HeaderMap, HeaderName, HeaderValue, Request, Response, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, Response, header},
     response::IntoResponse,
 };
 use opentelemetry::Context;
@@ -15,32 +15,16 @@ use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::error::AppError;
+use super::extractors::msgpack::{CONTENT_TYPE_MSGPACK, wants_msgpack_response};
 use super::response::NegotiablePayload;
 
-#[derive(Clone, Debug)]
-pub struct RequestId(pub String);
-
 /// Per-request trace context middleware.
-/// - Extracts W3C `traceparent` (or GCP `X-Cloud-Trace-Context`).
-/// - Assigns or forwards `X-Request-Id` (UUIDv7).
-pub async fn trace_context(mut req: Request<Body>, next: axum::middleware::Next) -> Response<Body> {
-    let header_name = HeaderName::from_static("x-request-id");
-
-    let request_id = req
-        .headers()
-        .get(&header_name)
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-
-    req.extensions_mut().insert(RequestId(request_id.clone()));
-
+/// Extracts W3C `traceparent` (or GCP `X-Cloud-Trace-Context`) and attaches it as the parent span.
+pub async fn trace_context(req: Request<Body>, next: axum::middleware::Next) -> Response<Body> {
     let span = tracing::info_span!(
         "http.request",
         http.method = %req.method(),
         http.target = %req.uri().path(),
-        request_id = %request_id,
     );
 
     if let Some(remote_context) = extract_remote_context(req.headers())
@@ -50,16 +34,7 @@ pub async fn trace_context(mut req: Request<Body>, next: axum::middleware::Next)
     }
 
     let otel_context = span.context();
-    let mut response = next.run(req).with_context(otel_context).instrument(span).await;
-
-    if response.status() != StatusCode::NOT_MODIFIED {
-        response.headers_mut().insert(
-            header_name,
-            HeaderValue::from_str(&request_id).unwrap_or(HeaderValue::from_static("unknown")),
-        );
-    }
-
-    response
+    next.run(req).with_context(otel_context).instrument(span).await
 }
 
 /// Enforces per-request timeout. On timeout, returns standard error envelope with `TIMEOUT`.
@@ -83,11 +58,7 @@ pub async fn msgpack_negotiation(
     req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response<Body> {
-    let wants_msgpack = req
-        .headers()
-        .get(header::ACCEPT)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|accept| accept.contains("application/vnd.msgpack"));
+    let wants_msgpack = wants_msgpack_response(req.headers());
 
     let mut response = next.run(req).await;
 
@@ -101,11 +72,10 @@ pub async fn msgpack_negotiation(
         return response;
     };
 
-    match rmp_serde::to_vec_named(&*payload.0) {
+    match rmp_serde::encode::to_vec_named(&*payload.0) {
         Ok(msgpack_bytes) => {
             let headers = response.headers_mut();
-            headers
-                .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/vnd.msgpack"));
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE_MSGPACK));
             headers.remove(header::CONTENT_LENGTH);
             *response.body_mut() = Body::from(msgpack_bytes);
             response

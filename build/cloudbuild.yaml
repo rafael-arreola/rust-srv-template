@@ -25,7 +25,7 @@ steps:
       - "deploy"
       - "$_SERVICE_NAME"
       - "--image=$_ARTIFACT_REGISTRY/$_SERVICE_NAME:$COMMIT_SHA"
-      - "--service-account=$SERVICE_ACCOUNT_EMAIL"
+      - "--service-account=$_SERVICE_ACCOUNT_EMAIL"
       - "--region=$_REGION"
       - "--platform=managed"
       - "--allow-unauthenticated"
@@ -40,10 +40,16 @@ steps:
       - "--set-secrets=^##^MONGO_URL=$_MONGO_URL"
 
 substitutions:
-  _CACHE: "service-name-cache"
+  _SERVICE_NAME: "rust-srv-template"
   _SERVICE_ENV: "PRD"
+  _SERVICE_ACCOUNT_EMAIL: "service-account@$PROJECT_ID.iam.gserviceaccount.com"
+  _DEBUG_LEVEL: "info"
+  _MONGO_DB: "service-name-db"
+  # Nombre de secreto, nunca la cadena de conexión
+  _MONGO_URL: "mongo-url-secret:latest"
   _ARTIFACT_REGISTRY: "us-docker.pkg.dev/$PROJECT_ID/artifacts"
   _REGION: "us-central1"
+  _CACHE: "$_SERVICE_NAME-cache"
 
 options:
   machineType: E2_HIGHCPU_32
