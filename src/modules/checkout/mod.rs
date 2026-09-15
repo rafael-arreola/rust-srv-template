@@ -1,4 +1,4 @@
-pub(super) mod controller;
+mod controller;
 pub mod dto;
 pub mod workflow;
 

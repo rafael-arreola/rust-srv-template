@@ -1,6 +1,8 @@
 # Pipeline de CI/CD para Google Cloud Build:
 # 1. Construye imagen de contenedor con Buildx y caché remota en Artifact Registry.
-# 2. La suite de tests corre dentro de build/Dockerfile (etapa builder), abortando el deploy si falla.
+# 2. Las compuertas de calidad corren dentro de build/Dockerfile (etapa builder): cargo fmt,
+#    scripts/audit.sh, clippy -D warnings y cargo deny. Si algo falla no se produce imagen
+#    y el deploy no puede ocurrir.
 # 3. Despliega en Google Cloud Run de forma idempotente.
 steps:
   - id: "Building container image"

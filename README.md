@@ -78,8 +78,10 @@ Un error frecuente en el software es obligar a que todas las carpetas tengan exa
 rust-srv-template/
 ├── Cargo.toml
 ├── AGENTS.md                   # Directiva técnica vinculante (reglas y verificación)
-├── PROJECT.md                  # Brújula de negocio y catálogo de dominios
-├── docs/ARCHITECTURE.md        # Arquetipos, envelopes y estrategias de desacoplamiento
+├── PROJECT.md                  # Brújula de negocio, arquetipos y catálogo de dominios
+├── rust-toolchain.toml         # Versión de Rust clavada (build reproducible)
+├── deny.toml                   # Política de supply-chain (cargo-deny)
+├── scripts/audit.sh            # Batería ejecutable de invariantes arquitectónicos
 │
 └── src/
     ├── main.rs                 # Arranque, telemetría y ExitCode
@@ -101,7 +103,7 @@ rust-srv-template/
 ## Autenticación (desconectada por defecto)
 
 `core::auth` (JWT/JWKS + RBAC) viene incluida en la plantilla, pero se entrega **desconectada**: ningún módulo de `src/modules/` ni el router la utilizan todavía.
-Para activarla, conéctala en el composition root (`src/app.rs`) siguiendo la guía de `docs/ARCHITECTURE.md` §6, sin acoplar los módulos de negocio a la capa técnica.
+Para activarla, conéctala en el composition root (`src/app.rs`) siguiendo `AGENTS.md` Guardrail 17 y el catálogo de capacidades de `PROJECT.md` §2.3, sin acoplar los módulos de negocio a la capa técnica.
 
 ---
 
@@ -119,9 +121,14 @@ cargo run
 ```
 
 ### 3. Verificar que Todo esté en Orden
+
+Son las mismas cuatro compuertas que corre `build/Dockerfile`: si alguna falla, no se produce imagen y el deploy no ocurre.
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo check --all-targets
-cargo test
+bash scripts/audit.sh
 ```
+
+El repositorio no incluye suite de tests: `AGENTS.md` §0.2 los declara operación protegida, así que se crean solo cuando tú lo pidas explícitamente.

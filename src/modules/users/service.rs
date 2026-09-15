@@ -60,7 +60,11 @@ impl UserService {
 
         user.update_profile(input.name, input.email);
 
-        self.repo.update(id, &user).await?;
+        let updated = self.repo.update(id, &user).await?;
+        if !updated {
+            return Err(AppError::not_found("User", id));
+        }
+
         tracing::info!(user_id = %id, "User updated");
         Ok(user.into())
     }

@@ -53,7 +53,10 @@ impl UserRepository {
         let result = self.collection.insert_one(&doc).await?;
 
         let mut created = user.clone();
-        created.id = result.inserted_id.as_object_id().map(|oid| oid.to_hex()).unwrap_or_default();
+        created.id =
+            result.inserted_id.as_object_id().map(|oid| oid.to_hex()).ok_or_else(|| {
+                AppError::database("insert_one returned a non-ObjectId _id for User")
+            })?;
         Ok(created)
     }
 

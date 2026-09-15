@@ -1,8 +1,8 @@
-pub(super) mod controller;
-pub(super) mod document;
+mod controller;
+mod document;
 pub mod dto;
-pub(super) mod entity;
-pub(super) mod repository;
+mod entity;
+mod repository;
 pub mod service;
 
 use axum::Router;

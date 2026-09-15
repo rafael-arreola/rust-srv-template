@@ -26,5 +26,5 @@ pub use http::{
     TaskSuccessOutput, ValidatedBody, ValidatedQuery, is_msgpack_content_type,
     wants_msgpack_response,
 };
-pub use net::{APP_USER_AGENT, HttpClient, client_with_timeout, instrumented_client};
+pub use net::{APP_USER_AGENT, HttpClient};
 pub use telemetry::{TracerGuard, init_tracing};

@@ -13,9 +13,9 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Construye un cliente HTTP instrumentado con propagación de contexto W3C y timeouts obligatorios.
 ///
-/// Debe invocarse **una sola vez** en el composition root (`AppContext::new`) y el resultado
-/// inyectarse en los vendors como `Arc<HttpClient>`. Los vendors **no** deben llamar a esta
-/// función: construyen su adaptador con el cliente ya provisto.
+/// Visibilidad `pub(crate)` deliberada: la fábrica pertenece al composition root y no es alcanzable
+/// desde `vendors` ni desde `modules`, de modo que el compilador —y no la directiva— impide crear
+/// clientes ad hoc. Los vendors reciben el `Arc<HttpClient>` ya construido.
 ///
 /// Un fallo de construcción se propaga como `AppError`: jamás se degrada a un cliente sin
 /// timeouts, porque una petición saliente sin límite puede congelar indefinidamente una tarea
@@ -23,15 +23,7 @@ pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 ///
 /// El backend de spans es `DefaultSpanBackend`, que registra método, host y status sin la URL
 /// completa, evitando exportar query strings con tokens o identificadores sensibles.
-pub fn instrumented_client() -> AppResult<ClientWithMiddleware> {
-    client_with_timeout(DEFAULT_TIMEOUT)
-}
-
-/// Construye un cliente HTTP instrumentado con un timeout global explícito.
-///
-/// Al igual que [`instrumented_client`], se construye una sola vez en el composition root y se
-/// inyecta; no debe usarse como fábrica ad hoc dentro de un vendor.
-pub fn client_with_timeout(timeout: Duration) -> AppResult<ClientWithMiddleware> {
+pub(crate) fn client_with_timeout(timeout: Duration) -> AppResult<ClientWithMiddleware> {
     let client = reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
         .timeout(timeout)
@@ -47,6 +39,9 @@ pub fn client_with_timeout(timeout: Duration) -> AppResult<ClientWithMiddleware>
 /// Se construye en el composition root con [`HttpClient::try_new`] y se comparte clonando el
 /// `Arc<HttpClient>`. Implementa `Deref`/`DerefMut` hacia [`ClientWithMiddleware`] para que los
 /// vendors invoquen `get`, `post`, etc. directamente sobre el cliente.
+///
+/// No existe conversión desde un `ClientWithMiddleware` arbitrario: envolver un cliente externo
+/// permitiría inyectar uno sin timeouts y anular la garantía de esta frontera.
 #[derive(Clone)]
 pub struct HttpClient(ClientWithMiddleware);
 
@@ -74,11 +69,5 @@ impl Deref for HttpClient {
 impl DerefMut for HttpClient {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-impl From<ClientWithMiddleware> for HttpClient {
-    fn from(client: ClientWithMiddleware) -> Self {
-        Self(client)
     }
 }
