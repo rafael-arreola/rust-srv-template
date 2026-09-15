@@ -190,7 +190,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 - **FORBIDDEN:** calling `create_indexes()` from `main.rs` or ad hoc. Idempotent index creation is encapsulated in `Repository::new(&db).await`, so a slice owns its own schema guarantees. Index keys and their order are a modelling decision driven by the slice's real query shapes.
 - **Deletion semantics are the slice's decision, not a rule here.** Physical deletion, `deleted_at`, archival collections, and TTL expiry are all admissible; whatever a slice picks it applies consistently inside that slice. The demo `users`/`orders` slices use `deleted_at` as an illustration, not a mandate.
-- **Concurrency is the slice's call too.** When a write depends on state it just read, choose deliberately between an atomic `update_one` with a conditional filter (`{ "_id": oid, "stock": { "$gte": qty } }`), an optimistic-lock version field, or accepting the race because a unique index arbitrates it. State the choice in a comment when it is not obvious.
+- **Concurrency is the slice's call too.** When a write depends on state it just read, choose deliberately between an atomic `update_one` with a conditional filter (`{ "_id": oid, "stock": { "$gte": qty } }`), an optimistic-lock version field, or accepting the race because a unique index arbitrates it. **FORBIDDEN:** a read-then-write that none of the three covers.
 
 ### Guardrail 6 — Network, timeouts, and HTTP clients
 
@@ -212,7 +212,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 ### Guardrail 8 — Security and error exposure
 
 - **FORBIDDEN:** leaking internal infrastructure or private rules to the client. Connection strings, internal IPs, network errors, account balances, raw payloads, and stack traces stay in internal logs correlated by `trace_id`. The client receives only `AppError::public_message()`.
-- **FORBIDDEN:** `unwrap()` and `expect()` in application code (enforced by `unwrap_used`/`expect_used` clippy lints; `clippy.toml` exempts `#[cfg(test)]`). Propagate with `?` and map to `AppError`.
+- Propagate failures with `?` and map them to `AppError`. `unwrap()`/`expect()` are already rejected by the `unwrap_used`/`expect_used` lints in `Cargo.toml`, so the gate stops them before this document does.
 - **Canonical constructors:** prefer `AppError::{not_found, already_exists, duplicate, invalid, required, invalid_param, unauthorized, forbidden, business_rule, external_service, timeout, database, internal}` over ad-hoc `Custom` variants.
 - **Dual view.** `public_message()` is the only string authorized in a response payload — natural, friendly, censored; override with `.with_public(...)`. `internal_detail()` (and `Display`) is for structured internal logs only; add private detail with `.with_internal(...)` or `AppError::censored(...)`.
 - **Breadcrumbs.** As an error rises through `?`, stack context with `.attach_context("...")` (private, server log) or `.attach_public("...")` (client-safe, surfaced in `data.breadcrumbs`). Both exist on `AppError` and on `Result<T, AppError>` via `ContextExt`.
@@ -257,7 +257,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 - **FORBIDDEN:** importing `crate::modules`, `crate::vendors`, `bson`, `mongodb`, or `axum` from `src/shared/`. Its only admitted internal dependency is `crate::core::error`.
 - **FORBIDDEN:** hosting services, repositories, behavior traits, or loose utility files (`utils.rs`, `helpers.rs`) in `shared`. The only admitted logic is pure static methods on the type itself, grouped by concept (`geo.rs`, `money.rs`, `contact.rs`).
-- **Two-consumer rule:** a type enters `shared` when two modules, or a module and a vendor, consume it. A single-consumer type stays in that module even if it looks generic. Nothing is promoted preemptively.
+- **Two-consumer rule:** a type enters `shared` when two modules, or a module and a vendor, consume it. A single-consumer type stays in that module even if it looks generic.
 - **Additive policy for persisted enums:** the serde representation is a stable public contract affecting every collection that stores it. **FORBIDDEN:** renaming or removing a variant while documents still contain it; retire a variant by keeping it and marking it inactive. Changing `rename_all` requires a data migration.
 - **Vendor boundary:** a vendor may consume `shared` types but maps them at its own boundary to the provider's codes (for example `MX` to `MEX`). The vendor's external DTO is the provider's contract, not the business's.
 
