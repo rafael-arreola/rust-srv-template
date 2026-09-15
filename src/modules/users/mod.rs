@@ -1,3 +1,11 @@
+//! # users
+//!
+//! **Intent:** own the identity record of a customer — name and unique email.
+//! **Aggregate:** `User`. No lifecycle states; profile edits go through `update_profile`,
+//!   which is the only path that bumps `updated_at`.
+//! **Invariants:** email is unique (unique index on the collection).
+//! **Does not:** authenticate (`core::auth`), know about orders or checkout.
+
 mod controller;
 mod document;
 pub mod dto;

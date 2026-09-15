@@ -1,3 +1,12 @@
+//! # orders
+//!
+//! **Intent:** record a customer's purchase and its amount as a fact.
+//! **Aggregate:** `Order` + `OrderItem`. Lifecycle: creation only — `status` carries the
+//!   state and no transitions are modelled yet.
+//! **Invariants:** `total_amount` is derived from the items in `Order::new`; `user_id` is an
+//!   opaque reference to `users` and never changes.
+//! **Does not:** verify that the user exists (`checkout` does), group shipments.
+
 mod controller;
 mod document;
 pub mod dto;

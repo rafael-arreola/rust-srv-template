@@ -1,3 +1,12 @@
+//! # checkout
+//!
+//! **Intent:** orchestrate a purchase inside one HTTP request — verify the user, then
+//!   create the order. Composite slice: no persistence of its own.
+//! **Owns:** only the `CheckoutInput`/`CheckoutOutput` contract.
+//! **Invariants:** an order is created only for an existing user; it reaches `users` and
+//!   `orders` through their public services and output DTOs, never their internals.
+//! **Does not:** define user or order rules — those stay in their slices.
+
 mod controller;
 pub mod dto;
 pub mod workflow;

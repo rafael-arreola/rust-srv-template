@@ -103,6 +103,9 @@ fail_block 17 "#[allow(clippy::too_many_arguments)]" \
 fail_block 18 "#[tracing::instrument] sin skip_all" \
   "$(grep -rnE '#\[(tracing::)?instrument' src "${RS[@]}" | grep -v 'skip_all')"
 
+fail_block 19 "slice sin cabecera de intención (//! en la línea 1 de mod.rs)" \
+  "$(for f in src/modules/*/mod.rs; do head -1 "$f" | grep -q '^//!' || echo "$f"; done)"
+
 # ---------------------------------------------------------------------------
 # Checks de inspección (salida para revisión humana, nunca fallan)
 # ---------------------------------------------------------------------------
@@ -129,5 +132,5 @@ if [[ $FAILURES -gt 0 ]]; then
   exit 1
 fi
 
-printf '\nBatería de invariantes: 18 checks duros en verde.\n'
+printf '\nBatería de invariantes: 19 checks duros en verde.\n'
 exit 0

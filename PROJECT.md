@@ -1,126 +1,104 @@
-# Contexto y Brújula Estratégica del Servicio (`PROJECT.md`)
+# Project Compass (`PROJECT.md`)
 
-Este documento es la **brújula conceptual y de dominio del servicio**. Proporciona el marco de negocio y la guía de orientación técnica que permite a los modelos de lenguaje (LLMs) y desarrolladores tomar decisiones alineadas con la visión del proyecto sin sobre-ingeniería.
+The domain map of this service: which modules exist, why, how they relate, and the business rules no single module can enforce alone. Technical rules live in `AGENTS.md`; a module's own intent and invariants live in the `//!` header of its `mod.rs`. Nothing here repeats either.
 
-<!--
-  INSTRUCCIÓN PARA EL LLM / DESARROLLADOR:
-  Al clonar este boilerplate para construir un servicio real, completa las secciones 1 y 2
-  con el dominio específico del nuevo proyecto y mantén actualizada la tabla de dominios.
--->
+<!-- When cloning this boilerplate: fill §1 and §2, keep them current per §5. -->
 
 ---
 
-## 1. Misión y Propósito del Servicio
+## 1. Mission
 
-- **Nombre del Servicio:** `[NOMBRE_DEL_SERVICIO]`
-- **Propósito de Negocio:** `[Describe brevemente qué problema de negocio resuelve este servicio y su propuesta de valor]`
-- **Clientes y Consumidores:** `[APIs públicas, frontend web/móvil, otros microservicios, eventos asíncronos o crons]`
-- **Perímetro Operativo:** `[Límites del servicio: qué hace y qué NO debe hacer]`
-
----
-
-## 2. Catálogo de Dominios del Servicio
-
-| Dominio / Slice       | Arquetipo                   | Responsabilidad de Negocio                                  |
-| :-------------------- | :-------------------------- | :---------------------------------------------------------- |
-| `[ej. billing]`       | `[Stateful Domain Slice]`   | `[Gestión de facturas, timbrado fiscal y notas de crédito]` |
-| `[ej. notifications]` | `[Worker / Consumer Slice]` | `[Envío asíncrono de correos transaccionales y webhooks]`   |
-
-> **Nota del Boilerplate:** Los módulos de demostración (`users`, `orders`, `checkout`) incluidos en el template actúan como referencias vivas de los Arquetipos 1 y 2. Al inicializar el proyecto real, pueden renombrarse, refactorizarse o eliminarse según las necesidades del dominio.
-
-### 2.1 Vocabulario Compartido (Shared Kernel, `src/shared/`)
-
-| Tipo       | Archivo    | Representación serde                             | Consumidores                                    | Reglas puras                            |
-| :--------- | :--------- | :----------------------------------------------- | :---------------------------------------------- | :-------------------------------------- |
-| `Country`  | `geo.rs`   | Código ISO 3166-1 alpha-2 en mayúsculas (`"MX"`) | Ninguno aún (scaffold de demostración)          | `code()`, `currency()`, `TryFrom<&str>` |
-| `Currency` | `money.rs` | Código ISO 4217 en mayúsculas (`"MXN"`)          | Ninguno aún; derivada por `Country::currency()` | `code()`, `minor_unit_digits()`         |
-
-> Un tipo se registra aquí cuando cumple la regla de dos consumidores (dos módulos, o un módulo y un vendor). Si adquiere ciclo de vida, I/O o persistencia propios, se promueve a módulo y esta tabla conserva solo el identificador. Los catálogos de `Country` y `Currency` son de demostración: ajustarlos a los países y monedas reales del servicio.
-
-### 2.2 Arquetipos de Módulo (juego de archivos por responsabilidad)
-
-Un módulo no tiene una lista fija de seis archivos: adopta el arquetipo que corresponda a su responsabilidad.
-
-| Arquetipo                         | Archivos                                                                                     | Ejemplo    | Regla dura                                                                                          |
-| :-------------------------------- | :------------------------------------------------------------------------------------------- | :--------- | :--------------------------------------------------------------------------------------------------- |
-| **1. Stateful Domain Slice**      | `mod`, `controller`, `service`, `repository`, `entity`, `document`, `dto`                    | `users`    | Aplica la tríada de separación completa.                                                            |
-| **2. Composite / Workflow Slice** | `mod`, `controller`, `workflow` (o `service`), `dto`                                         | `checkout` | **PROHIBIDO** incluir `document.rs` o `repository.rs`: persiste a través de los servicios inyectados. |
-| **3. Lean / Gateway Slice**       | `mod`, `controller` (o `handlers`)                                                           | `health`   | Puede sostener **un** recurso vivo como estado del router (`.with_state(db)`); más de uno exige `service.rs`. |
-| **4a. Internal Consumer Slice**   | `mod`, `consumer` (o `worker`), `service`, `dto`                                              | —          | Sin superficie HTTP: se dispara por canal `broadcast`/`mpsc`.                                        |
-| **4b. HTTP Push Worker Slice**    | `mod`, `controller`, `service`, `dto`                                                        | —          | Token interno, fuera del prefijo público `/api/v1`.                                                  |
-| **5. Bulk / Ingestion Pipeline**  | `mod`, `controller`, `service`, `pipeline`, `repository`, `entity`, `document`, `dto`        | —          | El chunking y el encolado viven en `pipeline.rs`; `strategies/` si hay polimorfismo; `csv.rs` solo con parser propio. |
-
-**Regla de disparador:** si llega por canal es 4a; si llega por HTTP es 4b. La mera presencia de HTTP no convierte un slice en Arquetipo 1 o 3.
-
-**Nomenclatura:** `routes.rs`/`handlers.rs` en slices ligeros; `workflow.rs`/`usecase.rs` en orquestadores; `contract.rs` cuando el archivo define un acuerdo de intercambio entre módulos; `command.rs` para estado de orquestación interno (`pub(super)`).
-
-### 2.3 Capacidades Opcionales Incluidas (no cableadas)
-
-El template trae infraestructura lista que **ningún módulo consume todavía**. Es superficie `pub` deliberada, no código muerto: existe para ser cableada, y quien clone el boilerplate decide qué activa y qué borra.
-
-| Capacidad             | Dónde                          | Cómo se activa                                                                               |
-| :-------------------- | :----------------------------- | :-------------------------------------------------------------------------------------------- |
-| Autenticación JWT/RBAC| `core::auth`                   | Composition root: proveedor cripto → `Arc<dyn AuthProvider>` → `auth_middleware` por prefijo → `require_permission` por ruta (`AGENTS.md` Guardrail 17). |
-| Transporte MessagePack| `core::http::extractors`       | `MsgPack<T>` en el handler, o `Accept: application/vnd.msgpack` con `ENABLE_MSGPACK=true`.   |
-| Redis                 | `core::db::RedisProvider`      | Declarar `REDIS_URL`; el fallo de conexión al arranque es fatal.                             |
-| Adaptador de vendor   | `vendors::carrier`             | Construir en `AppContext` con el `Arc<HttpClient>` inyectado y pasar el `Arc<CarrierClient>` al módulo que lo use. |
-| Helpers BSON          | `core::db::mongo::helpers`     | `ModelId` y los deserializadores flexibles de fecha, para colecciones heredadas con tipos mixtos. |
-
-> Si al iniciar el proyecto real una capacidad no se va a usar, **bórrala**. Mantenerla sin consumidor la deja sin presión del compilador y se pudre en silencio.
-
-### 2.4 Fuera de Alcance del Boilerplate (decisiones abiertas)
-
-No están incluidos y son decisión consciente de cada servicio, no olvidos: contrato publicable de API (OpenAPI), idempotencia de escrituras (`Idempotency-Key`), bus de eventos internos ya instanciado (la estrategia está definida en `AGENTS.md` Guardrail 3, la primitiva no), métricas RED y límites de tasa/concurrencia. Al necesitar cualquiera de ellos, decídelo explícitamente y regístralo aquí.
+- **Service:** `[SERVICE_NAME]`
+- **Business purpose:** `[the problem it solves and for whom]`
+- **Consumers:** `[public API, web/mobile, other services, async events, crons]`
+- **Operational perimeter:** `[what it does — and what it must never do]`
 
 ---
 
-## 3. Principios Rectores (índice, no reglamento)
+## 2. Domain Catalog
 
-Las reglas vinculantes viven en `AGENTS.md` y, cuando son verificables, en `scripts/audit.sh`. Aquí solo queda el índice: si una entra en conflicto con `AGENTS.md`, gana `AGENTS.md`.
+| Module | Archetype | Intent (one line; the full contract is in its `mod.rs` header) |
+| :----- | :-------- | :------------------------------------------------------------- |
+| `[billing]` | `[1 · Stateful]` | `[invoices, fiscal stamping, credit notes]` |
+| `[notifications]` | `[4a · Consumer]` | `[async transactional email and webhooks]` |
 
-| Principio                                                                             | Regla vinculante          |
-| :------------------------------------------------------------------------------------ | :------------------------ |
-| Cohesión vertical: el dominio vive en `src/modules/<dominio>/`, sin capas horizontales | Guardrail 1               |
-| Tríada de separación `dto` / `entity` / `document`; `model.rs` prohibido               | Guardrail 2, §1.2         |
-| Encapsulamiento forzado por el compilador (`pub(super)`), servicios intercambian DTOs  | Guardrail 2               |
-| Topología acíclica e identificadores opacos entre módulos (`user_id: String`)          | Guardrail 3               |
-| Despacho estático: `Arc<T>` concreto; lista cerrada de excepciones dinámicas           | Guardrail 11              |
-| Observabilidad de primera clase: `trace_id` W3C extremo a extremo                      | Guardrail 9, §1.4         |
-| Shared Kernel como hoja de vocabulario, regla de dos consumidores                      | Guardrail 13, §2.1        |
-| Cero DTOs mutables ni estructuras efímeras con lifetimes                               | Guardrail 14              |
-| Descomposición por responsabilidad al acercarse a 400 líneas de slice                  | Guardrail 15              |
+> The demo slices `users`, `orders`, `checkout`, `health` are live references for archetypes 1, 2, and 3. Rename, refactor, or delete them when the real domain arrives.
+
+### 2.1 Shared Kernel (`src/shared/`)
+
+| Type | File | Serde form | Consumers | Pure rules |
+| :--- | :--- | :--------- | :-------- | :--------- |
+| `Country` | `geo.rs` | ISO 3166-1 alpha-2, upper (`"MX"`) | none yet (scaffold) | `code()`, `currency()`, `TryFrom<&str>` |
+| `Currency` | `money.rs` | ISO 4217, upper (`"MXN"`) | none yet; derived by `Country::currency()` | `code()`, `minor_unit_digits()` |
+
+A type enters here only with two consumers (two modules, or a module and a vendor). If it grows a lifecycle, I/O, or persistence, it becomes a module and this table keeps just the identifier. Persisted enums are additive: never rename or remove a variant with live data.
+
+### 2.2 Archetypes
+
+A module has no fixed file list; it takes the shape its responsibility needs.
+
+| Archetype | Files | Example | Hard rule |
+| :-------- | :---- | :------ | :-------- |
+| **1 · Stateful Domain Slice** | `mod`, `controller`, `service`, `repository`, `entity`, `document`, `dto` | `users`, `orders` | Full separation triad. |
+| **2 · Composite / Workflow** | `mod`, `controller`, `workflow`, `dto` | `checkout` | **FORBIDDEN:** own `document.rs` or `repository.rs`; persists through injected services. |
+| **3 · Lean / Gateway** | `mod`, `controller` | `health` | May hold **one** live resource as router state; a second one requires `service.rs`. |
+| **4a · Internal Consumer** | `mod`, `consumer`, `service`, `dto` | — | No HTTP surface; triggered by `broadcast`/`mpsc`. |
+| **4b · HTTP Push Worker** | `mod`, `controller`, `service`, `dto` | — | Internal task token; mounted outside `/api/v1`. |
+| **5 · Bulk / Ingestion Pipeline** | `mod`, `controller`, `service`, `pipeline`, `repository`, `entity`, `document`, `dto` | — | Chunking and enqueuing in `pipeline.rs`; `strategies/` for polymorphism; `csv.rs` only with an own parser. |
+
+Trigger rule: arrives through a channel → 4a; arrives through HTTP → 4b. HTTP alone does not make a slice archetype 1 or 3. Naming: `workflow.rs`/`usecase.rs` for orchestrators, `contract.rs` for cross-module agreements, `command.rs` for private orchestration state.
+
+### 2.3 Optional Capabilities (shipped, not wired)
+
+Deliberate `pub` surface nobody consumes yet. Wire it or **delete it** — unused capability has no compiler pressure and rots silently.
+
+| Capability | Where | Activation |
+| :--------- | :---- | :--------- |
+| JWT/JWKS auth + RBAC | `core::auth` | Composition root: crypto provider → `Arc<dyn AuthProvider>` → `auth_middleware` per prefix → `require_permission` per route (`AGENTS.md` Guardrail 17). |
+| MessagePack transport | `core::http::extractors` | `MsgPack<T>` in a handler, or `Accept: application/vnd.msgpack` with `ENABLE_MSGPACK=true`. |
+| Redis | `core::db::RedisProvider` | Declare `REDIS_URL`; a startup connection failure is fatal. |
+| Vendor adapter | `vendors::carrier` | Build in `AppContext` with the injected `Arc<HttpClient>`; pass `Arc<CarrierClient>` to the consuming module. |
+| BSON helpers | `core::db::mongo::helpers` | `ModelId` and flexible date deserializers for legacy collections with mixed types. |
+
+### 2.4 Out of Scope (open decisions, not omissions)
+
+Publishable API contract (OpenAPI), write idempotency (`Idempotency-Key`), an instantiated internal event bus (strategy in `AGENTS.md` Guardrail 3, primitive not shipped), RED metrics, rate and concurrency limits. Decide each one explicitly when needed and record it here.
 
 ---
 
-## 4. Guía de Decisión Rápida para el LLM (Decision Guide)
+## 3. Cross-Cutting Business Rules
 
-Cuando se solicite implementar una nueva capacidad, aplicar este árbol de decisión:
+Rules that span two or more modules, so no single `mod.rs` header can own them. **Entry condition:** if one module can enforce it alone, it does not belong here — it goes in that module's header.
 
-- **¿Requiere persistencia propia en base de datos?**
-  $\rightarrow$ Crear **Arquetipo 1: Stateful Domain Slice** (`dto`, `entity`, `document`, `repository`, `service`, `controller`, `mod`).
-- **¿Requiere coordinar dos o más dominios existentes?**
-  $\rightarrow$ **PROHIBIDO** inyectar un módulo base en otro. Crear **Arquetipo 2: Composite / Workflow Slice** que orqueste los servicios.
-- **¿Es un endpoint técnico, probe o webhook ligero sin reglas complejas?**
-  $\rightarrow$ Crear **Arquetipo 3: Lean / Gateway Slice** (`controller`, `mod`).
-- **¿Es una tarea en background, cron job o consumidor de eventos?**
-  $\rightarrow$ Distinguir por el disparador: **Arquetipo 4a: Internal Consumer Slice** (canales `broadcast`/`mpsc`, sin HTTP) o **Arquetipo 4b: HTTP Push Worker Slice** (Cloud Tasks/webhook, `controller.rs` con token interno fuera del prefijo público). Ver la tabla de arquetipos en §2.2.
-- **¿Es una ingesta masiva de archivos, procesamiento en chunks o tareas encoladas?**
-  $\rightarrow$ Crear **Arquetipo 5: Bulk / Ingestion Pipeline Slice** (`dto`, `pipeline`, `entity`, `document`, `repository`, `service`, `controller`, `mod`, más `strategies/` si aplica). `csv.rs` solo si el slice tiene parser propio.
-- **¿Es una integración con una API externa (ej. pasarelas, SMS, carriers)?**
-  $\rightarrow$ Crear un adaptador en `src/vendors/<nombre>/` que reciba el `Arc<HttpClient>` inyectado desde el composition root, con error mapping a `AppError`.
-- **¿La capacidad es autenticación, RBAC o resolución del principal?**
-  $\rightarrow$ Usar la familia `core::auth` (`AuthProvider`, `AuthPrincipal`, `auth_middleware`, `require_permission`, `task_auth_middleware`), que viene **desconectada** por defecto; nunca un módulo de dominio ni lógica en el `service`.
-- **¿El handler necesita el principal o el país de la petición?**
-  $\rightarrow$ El middleware de contexto de petición valida e inyecta; el `controller.rs` extrae con extractores tipados y pasa primitivos al `service`. El `service` jamás lee `extensions`. Ver `AGENTS.md` Guardrail 17.
-- **¿Es un tipo de vocabulario (enum de catálogo cerrado o value object) que usan dos o más módulos, o un módulo y un vendor?**
-  $\rightarrow$ Colocarlo en `src/shared/` agrupado por concepto (`geo.rs`, `money.rs`, `contact.rs`) y registrarlo en §2.1. Con un solo consumidor permanece en ese módulo. Con ciclo de vida o persistencia propios, es un módulo.
-
-Las decisiones puramente técnicas ya resueltas —dónde van las rutas, cómo se agrupan las dependencias de un `new()`, qué devuelve un repositorio paginado— no se deciden aquí: están fijadas en los Guardrails 10, 14 y 15 de `AGENTS.md`.
+| Rule | Modules involved | Enforced where |
+| :--- | :--------------- | :------------- |
+| `[an order is created only for an existing user]` | `[checkout, users, orders]` | `[checkout/workflow.rs, step 1]` |
 
 ---
 
-## 5. Protocolo de Mantenimiento Continuo
+## 4. Capability Decision Guide
 
-Cada vez que un agente o desarrollador incorpore, elimine o refactorice un módulo de dominio, un vendor o un tipo del Shared Kernel en el servicio real, **DEBE actualizar sintéticamente las secciones 2 y 2.1 de este archivo** en la misma entrega atómica.
+Where does a new capability go?
 
-Si el cambio introduce, elimina o modifica un arquetipo, **DEBE actualizar la tabla de §2.2** en la misma entrega. Si cambia una regla técnica vinculante, el archivo a tocar es `AGENTS.md` (y `scripts/audit.sh` cuando la regla sea verificable). Este archivo es la brújula de negocio; no hay un tercer documento de arquitectura.
+- **Needs its own collection?** → Archetype 1.
+- **Coordinates two or more existing domains?** → Archetype 2. **FORBIDDEN:** injecting one base module into another.
+- **Technical endpoint, probe, or lightweight webhook?** → Archetype 3.
+- **Background job, cron, or event consumer?** → 4a if triggered by a channel, 4b if by HTTP (§2.2).
+- **Bulk file ingestion, chunking, queued work?** → Archetype 5.
+- **External API integration?** → `src/vendors/<name>/` receiving the injected `Arc<HttpClient>`, errors mapped to `AppError`.
+- **Authentication, RBAC, principal resolution?** → `core::auth` (§2.3); never a domain module.
+- **A vocabulary type (closed enum, value object) used by two modules, or a module and a vendor?** → `src/shared/`, registered in §2.1. One consumer → stays in that module. Own lifecycle → it is a module.
+- **A business rule that crosses modules?** → §3. Local to one module → its `mod.rs` header.
+
+---
+
+## 5. Maintenance
+
+Every change travels with its knowledge, in the same delivery:
+
+1. **Module added, removed, or re-scoped** → update §2 (and §2.2 if a new archetype appears).
+2. **A module's intent or invariants change** → update the `//!` header of its `mod.rs`. `scripts/audit.sh` check 19 fails the build if a slice ships without one.
+3. **A rule crosses a second module** → move it from the header to §3.
+4. **Shared type, vendor, or optional capability changes** → §2.1 / §2.3.
+
+Technical rules never land here: they go to `AGENTS.md`, and to `scripts/audit.sh` when verifiable.

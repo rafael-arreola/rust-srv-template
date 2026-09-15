@@ -104,7 +104,7 @@ Archetype 1 (persistent slice). `PROJECT.md` §2.2 holds the file set of every o
 
 | File                        | Owns                                                                                                        | Visibility  |
 | :-------------------------- | :---------------------------------------------------------------------------------------------------------- | :---------- |
-| `mod.rs`                    | DAG constructor (`pub async fn new`), route assembly to `Router<()>`, export control.                       | —           |
+| `mod.rs`                    | `//!` intent header (intent, aggregate + lifecycle, invariants, non-goals), DAG constructor, routes, exports. | —           |
 | `dto.rs` or `dto/`          | Transport boundary: `*Input` (`validator`), `*Output` (`Serialize`), `*Query`, and `From<Entity>` mappers.  | `pub`       |
 | `service.rs`                | Business orchestration and semantic validation. Public methods take and return DTOs only.                   | `pub`       |
 | `contract.rs` (optional)    | Narrow projection other modules may call, instead of the service's whole surface.                           | `pub`       |
@@ -341,7 +341,7 @@ Do not invent scripts or install external tooling. Deployments, migrations, and 
 The battery is executable, not prose: **`scripts/audit.sh`**. Run it as-is; never retype its greps.
 
 ```bash
-bash scripts/audit.sh            # 18 hard checks (exit 1 on any match) + 5 inspections
+bash scripts/audit.sh            # 19 hard checks (exit 1 on any match) + 5 inspections
 bash scripts/audit.sh --quiet    # violations only, the mode the deploy gate uses
 ```
 
@@ -363,7 +363,7 @@ Work is complete when:
 1. My requested observable behavior is implemented with zero pending cases.
 2. The four commands in §3.1 exit 0 (or failures are proven pre-existing and external).
 3. Final diff matches my requested scope, preserves my modifications, and leaves zero debug/dead code.
-4. `PROJECT.md` is updated when the domain catalog, the archetype table, vendors, optional capabilities, or Shared Kernel types change. `scripts/audit.sh` and §3.2 are updated together when a guardrail changes.
+4. Knowledge travels with the change: a module's `//!` header when its intent or invariants move; `PROJECT.md` when the catalog, a cross-cutting rule, a vendor, a capability, or a Shared Kernel type changes; `scripts/audit.sh` when a guardrail changes.
 5. All unavailable checks or external blockers are reported to me precisely.
 
 ---
