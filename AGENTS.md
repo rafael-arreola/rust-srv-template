@@ -102,17 +102,17 @@ Non-obvious facts that rules depend on:
 
 Archetype 1 (persistent slice). `PROJECT.md` §2.2 holds the file set of every other archetype.
 
-| File                        | Owns                                                                                                        | Visibility  |
-| :-------------------------- | :---------------------------------------------------------------------------------------------------------- | :---------- |
-| `mod.rs`                    | `//!` intent header (intent, aggregate + lifecycle, invariants, non-goals), DAG constructor, routes, exports. | —           |
-| `dto.rs` or `dto/`          | Transport boundary: `*Input` (`validator`), `*Output` (`Serialize`), `*Query`, and `From<Entity>` mappers.  | `pub`       |
-| `service.rs`                | Business orchestration and semantic validation. Public methods take and return DTOs only.                   | `pub`       |
-| `contract.rs` (optional)    | Narrow projection other modules may call, instead of the service's whole surface.                           | `pub`       |
-| `entity.rs` or `entity/`    | Domain aggregates, invariants, Value Objects, lifecycle transitions. Zero MongoDB/BSON/serde imports.       | private     |
-| `document.rs` or `document/`| BSON storage schema (`_id`, `ObjectId`) with `from_domain`/`into_domain`. Imported only by `repository.rs`. | private     |
-| `repository.rs`             | Collection access, idempotent index creation inside `new(&db)`, criteria execution.                         | private     |
-| `controller.rs`             | Resource-relative routes, project extractors, `ApiResponse` envelope.                                       | private     |
-| `command.rs` (optional)     | Internal command construction and multi-step state.                                                         | private     |
+| File                         | Owns                                                                                                          | Visibility |
+| :--------------------------- | :------------------------------------------------------------------------------------------------------------ | :--------- |
+| `mod.rs`                     | `//!` intent header (intent, aggregate + lifecycle, invariants, non-goals), DAG constructor, routes, exports. | —          |
+| `dto.rs` or `dto/`           | Transport boundary: `*Input` (`validator`), `*Output` (`Serialize`), `*Query`, and `From<Entity>` mappers.    | `pub`      |
+| `service.rs`                 | Business orchestration and semantic validation. Public methods take and return DTOs only.                     | `pub`      |
+| `contract.rs` (optional)     | Narrow projection other modules may call, instead of the service's whole surface.                             | `pub`      |
+| `entity.rs` or `entity/`     | Domain aggregates, invariants, Value Objects, lifecycle transitions. Zero MongoDB/BSON/serde imports.         | private    |
+| `document.rs` or `document/` | BSON storage schema (`_id`, `ObjectId`) with `from_domain`/`into_domain`. Imported only by `repository.rs`.   | private    |
+| `repository.rs`              | Collection access, idempotent index creation inside `new(&db)`, criteria execution.                           | private    |
+| `controller.rs`              | Resource-relative routes, project extractors, `ApiResponse` envelope.                                         | private    |
+| `command.rs` (optional)      | Internal command construction and multi-step state.                                                           | private    |
 
 `model.rs` is **FORBIDDEN**. Logical deletion (`deleted_at`) is a per-slice choice, not a rule: adopt it only when the domain requires it, then apply it consistently inside that slice.
 
@@ -171,11 +171,11 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 - Resolve inter-module coupling with exactly one of three strategies, chosen by business semantics:
 
-  | Strategy                   | Pick it when                                                                                  |
-  | :------------------------- | :--------------------------------------------------------------------------------------------- |
-  | **Orchestrator module**    | Synchronous flow that must answer inside the HTTP request across 2+ domains (e.g. `checkout`). New slice whose `new()` takes `Arc<AService>`, `Arc<BService>`. |
+  | Strategy                   | Pick it when                                                                                                                                                       |
+  | :------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | **Orchestrator module**    | Synchronous flow that must answer inside the HTTP request across 2+ domains (e.g. `checkout`). New slice whose `new()` takes `Arc<AService>`, `Arc<BService>`.     |
   | **Internal event channel** | Reactive side effect with no return value (notifications, auditing, cache invalidation). `broadcast`/`mpsc` created at startup; zero type imports between modules. |
-  | **Bounded-context merge**  | Two modules need continuous bidirectional CRUD and cannot operate independently. The split was false fragmentation. |
+  | **Bounded-context merge**  | Two modules need continuous bidirectional CRUD and cannot operate independently. The split was false fragmentation.                                                |
 
   Decide by asking whether you need an answer to continue: if yes it is an edge and must stay acyclic; if no it is an event and must not create an edge. An orchestrator calls only public service methods and consumes public DTOs; reaching into the repositories, collections, or BSON of the modules it coordinates is **FORBIDDEN**.
 
@@ -277,15 +277,15 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 - Files under `src/core/` and `src/shared/` are reported by the same script as an inspection (check D), not blocked: infrastructure primitives such as the error taxonomy legitimately exceed the threshold. Crossing it there is a prompt to review cohesion, not a failure.
 - **REQUIRED:** decompose by responsibility into dedicated sub-components within the slice. Keep `service.rs` a thin orchestration facade.
 
-  | Pattern                                  | Use it for                                                                    |
-  | :--------------------------------------- | :---------------------------------------------------------------------------- |
-  | `command.rs`                             | Internal orchestration commands and multi-step state (private `mod`).         |
-  | `pipeline.rs`                            | Multi-step flows: chunking, payload generation, task enqueuing.               |
-  | `strategies/`                            | Internal polymorphism: formatters, calculation or export engines.             |
-  | `repository/{queries,mutations,bulk}.rs` | Splitting read, write, and batch persistence concerns.                        |
-  | `dto/`                                   | `mod.rs` (re-exports), `input.rs`, `output.rs`, `query.rs`, sub-resources.     |
-  | `entity/`                                | `mod.rs`, `root.rs` (aggregate root), `<child>.rs`, `value_objects.rs`.        |
-  | `document/`                              | `mod.rs`, `schema.rs`, `mappers.rs`, `subdocuments.rs`.                        |
+  | Pattern                                  | Use it for                                                                 |
+  | :--------------------------------------- | :------------------------------------------------------------------------- |
+  | `command.rs`                             | Internal orchestration commands and multi-step state (private `mod`).      |
+  | `pipeline.rs`                            | Multi-step flows: chunking, payload generation, task enqueuing.            |
+  | `strategies/`                            | Internal polymorphism: formatters, calculation or export engines.          |
+  | `repository/{queries,mutations,bulk}.rs` | Splitting read, write, and batch persistence concerns.                     |
+  | `dto/`                                   | `mod.rs` (re-exports), `input.rs`, `output.rs`, `query.rs`, sub-resources. |
+  | `entity/`                                | `mod.rs`, `root.rs` (aggregate root), `<child>.rs`, `value_objects.rs`.    |
+  | `document/`                              | `mod.rs`, `schema.rs`, `mappers.rs`, `subdocuments.rs`.                    |
 
   `entity/` and `document/` stay private `mod` in the slice's `mod.rs`, so the directory form keeps the same compiler guardrail as the single-file form.
 
@@ -341,7 +341,7 @@ Do not invent scripts or install external tooling. Deployments, migrations, and 
 The battery is executable, not prose: **`scripts/audit.sh`**. Run it as-is; never retype its greps.
 
 ```bash
-bash scripts/audit.sh            # 19 hard checks (exit 1 on any match) + 5 inspections
+bash scripts/audit.sh            # 23 hard checks (exit 1 on any match) + 5 inspections
 bash scripts/audit.sh --quiet    # violations only, the mode the deploy gate uses
 ```
 
