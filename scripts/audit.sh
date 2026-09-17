@@ -49,7 +49,7 @@ inspect_block() {
 
 # Índice "archivo:línea" de cada línea contenida en un bloque `#[cfg(test)]` de nivel raíz.
 TEST_INDEX="$(mktemp "${TMPDIR:-/tmp}/audit_test_lines.XXXXXX")"
-trap 'rm -f "$TEST_INDEX"' EXIT
+trap 'rm -f "$TEST_INDEX" "$LOG_INDEX"' EXIT
 
 find src -name '*.rs' -print0 | xargs -0 awk '
   FNR == 1 { intest = 0 }
@@ -61,6 +61,31 @@ find src -name '*.rs' -print0 | xargs -0 awk '
 # Filtra de una salida `grep -rn` las coincidencias que caen dentro de código de test.
 exclude_tests() {
   awk -v idx="$TEST_INDEX" '
+    BEGIN { while ((getline line < idx) > 0) skip[line] = 1 }
+    { split($0, p, ":"); if (!((p[1] ":" p[2]) in skip)) print }
+  '
+}
+
+# Índice "archivo:línea" de cada línea dentro de una llamada de logging (`tracing::`/`log::`).
+# Los logs son la superficie donde un payload sin tipo es admisible: son observabilidad, no
+# contrato. Una sentencia de log termina en `;` o en la llave que cierra su bloque; el tope de
+# líneas acota el arrastre si el terminador no aparece, y al cerrar antes solo puede volver el
+# check más estricto, nunca más laxo.
+LOG_INDEX="$(mktemp "${TMPDIR:-/tmp}/audit_log_lines.XXXXXX")"
+
+find src -name '*.rs' -print0 | xargs -0 awk -v cap=60 '
+  FNR == 1 { inlog = 0; run = 0 }
+  !inlog && /(tracing|log)::(trace|debug|info|warn|error|event)![(]/ { inlog = 1; run = 0 }
+  inlog {
+    print FILENAME ":" FNR
+    run++
+    if ($0 ~ /;[[:space:]]*$/ || $0 ~ /^[[:space:]]*}[[:space:]]*$/ || run > cap) inlog = 0
+  }
+' > "$LOG_INDEX"
+
+# Filtra de una salida `grep -rn` las coincidencias que caen dentro de una llamada de logging.
+exclude_logs() {
+  awk -v idx="$LOG_INDEX" '
     BEGIN { while ((getline line < idx) > 0) skip[line] = 1 }
     { split($0, p, ":"); if (!((p[1] ":" p[2]) in skip)) print }
   '
@@ -156,6 +181,19 @@ SERVICE_FILES="$(grep -rlE 'impl [A-Za-z0-9]*Service\b' src/modules "${RS[@]}" 2
 fail_block 23 "entidades o documentos en la firma pública de un service" \
   "$(if [[ -n "$SERVICE_FILES" ]]; then grep -nE 'pub (async )?fn .*\b(Order|Manifest|Transport|Warehouse|Inventory|CustomState|StandardizationRule|ClientEntity|[A-Za-z0-9]+Document)\b' $SERVICE_FILES 2>/dev/null; fi)"
 
+fail_block 24 "construcción de payloads con json! fuera de logs (usar structs con serde)" \
+  "$(grep -rnE '\bjson!\s*\(' src "${RS[@]}" | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)' | exclude_logs)"
+
+fail_block 25 "datos genéricos serde_json::Value/Map fuera de las puertas declaradas" \
+  "$(grep -rnE '\bserde_json::(Value|Map)\b' src "${RS[@]}" \
+     | grep -vE '^src/vendors/[a-z0-9_]+/dto(/[a-z0-9_]+\.rs|\.rs):' \
+     | grep -vE '^src/modules/[a-z0-9_]+/dto/raw_payload\.rs:' \
+     | grep -vE '^src/core/telemetry/' \
+     | exclude_logs)"
+
+fail_block 26 "acceso a campos de payload por cadena en módulos (.get(\"...\")/.as_array()/.as_u64())" \
+  "$(grep -rnE '\.get(_mut)?\(\s*\"|\.as_array(_mut)?\(\)|\.as_u64\(\)' src/modules "${RS[@]}" | exclude_logs)"
+
 # ---------------------------------------------------------------------------
 # Checks de inspección (salida para revisión humana, nunca fallan)
 # ---------------------------------------------------------------------------
@@ -183,5 +221,5 @@ if [[ $FAILURES -gt 0 ]]; then
   exit 1
 fi
 
-printf '\nBatería de invariantes: 23 checks duros en verde.\n'
+printf '\nBatería de invariantes: 26 checks duros en verde.\n'
 exit 0

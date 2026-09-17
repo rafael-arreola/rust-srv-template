@@ -315,6 +315,27 @@ Authentication is a `core` capability, never a domain module. The template ships
 - **Wiring (composition root only):** install the crypto provider once at startup, build the `Arc<dyn AuthProvider>`, layer `auth_middleware` on the protected prefix, then apply `require_permission`/`require_any_permission` per route.
 - HTTP push workers (Cloud Tasks, provider webhooks) are authorized by the internal task token middleware, never by user authentication, and live outside the public prefix (Guardrail 10).
 
+### Guardrail 18 — Typed payloads, never generic data
+
+Every value that crosses a boundary is a named Rust type with `Serialize`/`Deserialize`. The boundaries are HTTP in and out, BSON documents, worker and task messages, inter-module calls, and vendor calls. A `serde_json::Value` is not a modelling tool.
+
+- **FORBIDDEN:** `serde_json::json!` outside the logging surface.
+- **FORBIDDEN:** `serde_json::Value` or `serde_json::Map` in any struct field, function parameter, or return type, except where the exception below allows it.
+- **FORBIDDEN:** reading a payload by string key — `.get("...")`, `.get_mut("...")`, `.as_array()`, `.as_array_mut()`, `.as_u64()`. A `Value` accessed that way is a struct that was never written; the field name becomes a string that no compiler checks.
+- **FORBIDDEN:** erasing a value that already has a type. When a struct exists, the boundary carries the struct, not a re-serialized `Value`.
+- **REQUIRED — the only admissible uses**, each confined to where the table says:
+
+  | Door                | Where                                                            | Why it cannot be modeled                                                                                                                                                                                                                                                                                              |
+  | :------------------ | :--------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | Opaque peer payload | `vendors/<x>/dto.rs`                                             | The shape is the peer's, not ours, and it is forwarded verbatim. Declare a `#[serde(transparent)]` newtype named for what it is (`CarrierRawResponse`), add a `///` line stating the reason, and deserialize it once at the vendor boundary.                                                                          |
+  | Worker envelope     | `modules/<x>/dto/raw_payload.rs`                                 | The concrete type is selected by a path segment (`{strategy}/{action}`) that cannot be read before the body is extracted. A `Raw*Payload` newtype carries the body until the strategy names its type, and is converted exactly once.                                                                                  |
+  | Logging surface     | `core/telemetry/` and every `tracing::*!` / `log::*!` invocation | A payload dumped for a human is observability, not a contract. Building it field by field buys nothing, and forcing it through a struct invents types that exist only to serve a log line. The same payload crossing a boundary must be typed, and the line between the two is whether the value leaves the log call. |
+
+- **REQUIRED:** a polymorphic JSON field with a known set of shapes — a claim that is a string or an array of strings — gets a newtype with a hand-written `Deserialize`. The branching lives in the type, not at each use site.
+- **REQUIRED:** a vendor client takes `&T where T: Serialize` for a request body, never `Value`.
+
+Outside those three doors a bare `Value` appears in no signature. Enforced by `scripts/audit.sh` checks 24–26: 24 bans `json!` outside a log call, 25 leaves exactly the three doors open, and 26 bans string-key access in `src/modules/`. All three exempt lines inside a `tracing::*!`/`log::*!` statement, so logging stays cheap and everything else stays typed.
+
 ---
 
 ## 3. Verification and Completion
@@ -341,7 +362,7 @@ Do not invent scripts or install external tooling. Deployments, migrations, and 
 The battery is executable, not prose: **`scripts/audit.sh`**. Run it as-is; never retype its greps.
 
 ```bash
-bash scripts/audit.sh            # 23 hard checks (exit 1 on any match) + 5 inspections
+bash scripts/audit.sh            # 26 hard checks (exit 1 on any match) + 5 inspections
 bash scripts/audit.sh --quiet    # violations only, the mode the deploy gate uses
 ```
 
