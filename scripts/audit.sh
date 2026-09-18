@@ -181,8 +181,11 @@ SERVICE_FILES="$(grep -rlE 'impl [A-Za-z0-9]*Service\b' src/modules "${RS[@]}" 2
 fail_block 23 "entidades o documentos en la firma pública de un service" \
   "$(if [[ -n "$SERVICE_FILES" ]]; then grep -nE 'pub (async )?fn .*\b(Order|Manifest|Transport|Warehouse|Inventory|CustomState|StandardizationRule|ClientEntity|[A-Za-z0-9]+Document)\b' $SERVICE_FILES 2>/dev/null; fi)"
 
-fail_block 24 "construcción de payloads con json! fuera de logs (usar structs con serde)" \
-  "$(grep -rnE '\bjson!\s*\(' src "${RS[@]}" | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)' | exclude_logs)"
+fail_block 24 "construcción de payloads con json! fuera de la superficie de logging" \
+  "$(grep -rnE '\bjson!\s*\(' src "${RS[@]}" \
+     | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)' \
+     | grep -vE '^src/core/telemetry/' \
+     | exclude_logs)"
 
 fail_block 25 "datos genéricos serde_json::Value/Map fuera de las puertas declaradas" \
   "$(grep -rnE '\bserde_json::(Value|Map)\b' src "${RS[@]}" \

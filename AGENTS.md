@@ -334,6 +334,21 @@ Every value that crosses a boundary is a named Rust type with `Serialize`/`Deser
 - **REQUIRED:** a polymorphic JSON field with a known set of shapes — a claim that is a string or an array of strings — gets a newtype with a hand-written `Deserialize`. The branching lives in the type, not at each use site.
 - **REQUIRED:** a vendor client takes `&T where T: Serialize` for a request body, never `Value`.
 
+The logging door is the widest one, and it is meant to be used:
+
+```rust
+// Allowed, and preferred: the payload dies inside the log call. Inventing a struct here would
+// create a type that exists only to serve this line.
+tracing::warn!(
+    order_id = %order.id,
+    raw = %serde_json::json!({ "carrier_response": response, "attempt": attempt }),
+    "Carrier rejected the shipment"
+);
+
+// Forbidden: the same value leaves the log call and becomes a contract. Here it needs a name.
+fn handle_carrier_response(&self, raw: serde_json::Value) -> AppResult<()> { /* ... */ }
+```
+
 Outside those three doors a bare `Value` appears in no signature. Enforced by `scripts/audit.sh` checks 24–26: 24 bans `json!` outside a log call, 25 leaves exactly the three doors open, and 26 bans string-key access in `src/modules/`. All three exempt lines inside a `tracing::*!`/`log::*!` statement, so logging stays cheap and everything else stays typed.
 
 ---
