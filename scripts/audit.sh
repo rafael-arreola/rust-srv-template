@@ -150,8 +150,9 @@ fail_block 13 "tracking ad-hoc x-request-id" \
 fail_block 14 "re-exports de internos que anulan la frontera del slice" \
   "$(grep -rnE 'pub use ([a-z_:]+::)?(entity|repository|document|controller|command|pipeline)::' src/modules "${RS[@]}")"
 
-fail_block 15 "archivo de slice por encima de 400 líneas" \
-  "$(find src/modules -name '*.rs' -exec wc -l {} + | awk '$1 > 400 && $2 != "total"')"
+# Check 15 retirado: ya no hay límite de tamaño por archivo (AGENTS.md Guardrail 15).
+# El id se conserva vacío para no renumerar los checks 16–26, que AGENTS.md y PROJECT.md
+# referencian por número.
 
 fail_block 16 "rutas totalmente calificadas en línea (los use van arriba)" \
   "$(grep -rnE '(crate::modules|crate::core|crate::vendors|crate::shared)::' src "${RS[@]}" \
@@ -211,11 +212,14 @@ inspect_block B "submódulos anidados: revisar regla de fachada única (máximo 
 inspect_block C "lecturas de extensions() en módulos: el service jamás debe leerlas" \
   "$(grep -rn 'extensions()' src/modules "${RS[@]}")"
 
-inspect_block D "archivos de core/shared/vendors por encima de 400 líneas (umbral duro solo en slices)" \
-  "$(find src/core src/shared src/vendors -name '*.rs' -exec wc -l {} + | awk '$1 > 400 && $2 != "total"')"
+inspect_block D "archivos más grandes de src (sin umbral: revisar que cada uno cubra una sola familia de actividades)" \
+  "$(find src -name '*.rs' -exec wc -l {} + | awk '$2 != "total" && $1 > 0' | sort -rn | head -20)"
 
 inspect_block E "Paginated<T> cruzando la frontera del repositorio (debe ser QueryResult<T>)" \
   "$(grep -rn 'Paginated' src/modules --include='repository.rs' --include='repository/*.rs')"
+
+inspect_block F "lifetimes explícitos: cada coincidencia debe justificar que no hay alternativa (Guardrail 19)" \
+  "$(grep -rnE "<'[a-z]" src "${RS[@]}" | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)')"
 
 # ---------------------------------------------------------------------------
 
@@ -224,5 +228,5 @@ if [[ $FAILURES -gt 0 ]]; then
   exit 1
 fi
 
-printf '\nBatería de invariantes: 26 checks duros en verde.\n'
+printf '\nBatería de invariantes: 25 checks duros en verde.\n'
 exit 0

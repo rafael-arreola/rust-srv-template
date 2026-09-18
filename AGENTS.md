@@ -243,6 +243,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 - **FORBIDDEN:** dynamic traits (`Arc<dyn Trait>`) and synthetic test doubles; inject concrete `Arc<T>`.
 - **Allowed dynamic-polymorphism exceptions (closed list, exhaustive):** provider ports selected once at startup (for example, an authentication provider) and `erased_serde::Serialize` in the response envelope. No other exception exists; "genuinely unavoidable" is not a valid justification.
+- **REQUIRED:** the smallest cohesive change that solves the problem. A new module, helper, trait, wrapper, generic, or config knob needs a concrete reason; "it reads cleaner" and "it might be reused" are not reasons. Add the abstraction when the second consumer arrives, not before.
 - No dead code, orphaned functions, speculative abstractions, temporary files, or debug residue (`println!`, `dbg!`) in delivered work.
 
 ### Guardrail 12 — External integrations (vendors)
@@ -263,31 +264,29 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
 ### Guardrail 14 — DTO organization, criteria, and transient structs
 
-- **REQUIRED:** Use a single `dto.rs` for compact slices (≤3 DTOs, <150 lines). When a slice handles standard CRUD or multi-resource operations, separate into a `dto/` directory (`mod.rs`, `input.rs`, `output.rs`, `query.rs`, and optional sub-resources such as `items.rs` or `detail.rs`).
+- **REQUIRED:** Use a single `dto.rs` while the transport surface is compact (≤3 DTOs). When the slice handles standard CRUD or several resources, separate into a `dto/` directory (`mod.rs`, `input.rs`, `output.rs`, `query.rs`, and optional sub-resources such as `items.rs` or `detail.rs`). The split follows responsibilities, never a line count.
 - **FORBIDDEN:** `Command` structs in `dto.rs` or `dto/` that act as mutable bags of fields, store `raw_payload`, or execute domain logic (such as `get_country()` or `to_manifest_data()`). DTOs contain only immutable serialization contracts (`*Input`, `*Output`, `*Query`).
-- **FORBIDDEN:** declaring ephemeral structs with borrowed lifetimes (e.g. `struct X<'a>`) in `service.rs` or `repository.rs` merely to bypass argument count limits. Use domain value objects or entity builders.
 - **FORBIDDEN:** repository methods returning untyped tuples `AppResult<(Vec<T>, u64)>`. Use typed return structs.
 - **REQUIRED:** (1) `dto/query.rs` declares the validated `List<Resource>Query` with transport types and `#[serde(flatten)] pagination: PaginationQuery`; (2) `repository.rs` (or a private `criteria.rs`) declares a strongly-typed criteria struct with domain types and `skip`/`limit`; (3) the repository returns `QueryResult<T>` (`{ items, total }`) from `crate::core::db`, and the **service** maps it into the transport `Paginated<OutputDto>`. `Paginated<T>` must never cross the repository boundary.
 - **ALLOWED:** owned dependency structs such as `XModuleDeps` to group constructor dependencies for injection. They carry only live resources/services and are not domain staging.
 - **FORBIDDEN:** `#[allow(clippy::too_many_arguments)]`; group dependencies in an owned `XModuleDeps` struct instead.
 
-### Guardrail 15 — Slice sizing and decomposition
+### Guardrail 15 — Slice organization and responsibility families
 
-- **FORBIDDEN:** any file under `src/modules/` over **400 lines** (hard limit, enforced by `scripts/audit.sh` check 15). It applies to every file in the slice — `service.rs`, `controller.rs`, `repository.rs`, `command.rs`, and so on — not only to ingestion services.
-- Files under `src/core/` and `src/shared/` are reported by the same script as an inspection (check D), not blocked: infrastructure primitives such as the error taxonomy legitimately exceed the threshold. Crossing it there is a prompt to review cohesion, not a failure.
-- **REQUIRED:** decompose by responsibility into dedicated sub-components within the slice. Keep `service.rs` a thin orchestration facade.
+- **REQUIRED:** every slice stays inside the file set of its archetype (`PROJECT.md` §2.2) laid out per §1.2. The set is a **ceiling of allowed files, not a quota to fill**: ship a file only when the slice has that responsibility, and never create an empty placeholder to satisfy the shape — a file with no content is dead code, not template compliance. Files outside the set, and catch-all names (`helpers.rs`, `utils.rs`, `logic.rs`, `defaults.rs`, `errors.rs`), are **FORBIDDEN**: a responsibility with no home in the template means the archetype or §1.2 changes first.
+- **There is no line limit.** No file is rejected for its size and no check fails for it. Splitting a cohesive file to satisfy a quota is **FORBIDDEN**.
+- **REQUIRED — the organizing principle:** one file, one **family of activities**, whole and end to end. The families are transport contracts (`dto`), orchestration (`service`/`workflow`), read persistence, write persistence, storage mapping (`document`), domain model (`entity`), and HTTP surface (`controller`). A file that mixes two families is the real signal to split; a long file that stays inside one family stays whole.
+- **FORBIDDEN:** over-decomposition. The patterns below are tools for a concrete case, never a default and never a way to shorten a file:
 
-  | Pattern                                  | Use it for                                                                 |
-  | :--------------------------------------- | :------------------------------------------------------------------------- |
-  | `command.rs`                             | Internal orchestration commands and multi-step state (private `mod`).      |
-  | `pipeline.rs`                            | Multi-step flows: chunking, payload generation, task enqueuing.            |
-  | `strategies/`                            | Internal polymorphism: formatters, calculation or export engines.          |
-  | `repository/{queries,mutations,bulk}.rs` | Splitting read, write, and batch persistence concerns.                     |
-  | `dto/`                                   | `mod.rs` (re-exports), `input.rs`, `output.rs`, `query.rs`, sub-resources. |
-  | `entity/`                                | `mod.rs`, `root.rs` (aggregate root), `<child>.rs`, `value_objects.rs`.    |
-  | `document/`                              | `mod.rs`, `schema.rs`, `mappers.rs`, `subdocuments.rs`.                    |
+  | Pattern                                  | Use it only when                                                              |
+  | :--------------------------------------- | :---------------------------------------------------------------------------- |
+  | `command.rs`                             | A multi-step orchestration carries private state of its own.                  |
+  | `pipeline.rs`                            | A flow has genuinely separable stages: chunking, payload generation, enqueue. |
+  | `strategies/`                            | A real internal polymorphism: formatters, calculation or export engines.      |
+  | `repository/{queries,mutations,bulk}.rs` | Read, write, and batch persistence are distinct families in this slice.       |
 
-  `entity/` and `document/` stay private `mod` in the slice's `mod.rs`, so the directory form keeps the same compiler guardrail as the single-file form.
+- **REQUIRED:** `service.rs` stays a thin orchestration facade; the heavy lifting lives in the family that owns it.
+- **REQUIRED:** when `entity/` or `document/` takes the directory form, it stays a private `mod` in the slice's `mod.rs`, so it keeps the same compiler guardrail as the single-file form.
 
 ### Guardrail 16 — Import hygiene and qualification
 
@@ -351,6 +350,15 @@ fn handle_carrier_response(&self, raw: serde_json::Value) -> AppResult<()> { /* 
 
 Outside those three doors a bare `Value` appears in no signature. Enforced by `scripts/audit.sh` checks 24–26: 24 bans `json!` outside a log call, 25 leaves exactly the three doors open, and 26 bans string-key access in `src/modules/`. All three exempt lines inside a `tracing::*!`/`log::*!` statement, so logging stays cheap and everything else stays typed.
 
+### Guardrail 19 — Ownership and lifetimes
+
+- **REQUIRED:** owned values by default. Borrowing is a deliberate choice, not a style.
+- **FORBIDDEN:** explicit lifetime parameters (`struct X<'a>`, `impl<'a>`, `fn f<'a>`) unless there is no reasonable alternative. Each annotation must answer what an owned value, an `Arc<T>`, or a single clone at the request boundary would not.
+- **Reach for these first, in this order:** own the field (`String` over `&str`), share it (`Arc<T>`), or clone at the boundary that runs once per request or per message.
+- **Admitted exceptions, each confined to the item that needs it:** the `impl<'de> Deserialize<'de>` serde requires; a borrowed reader/writer pattern inside one function; an iterator chain whose lifetime stays elided and unnamed.
+- **NOTE:** most `&str`/`&T` parameters need no annotation at all — elision already covers them. If you wrote `<'a>`, you left elision behind and owe a `//` comment justifying it.
+- **FORBIDDEN:** a lifetime-parameterized struct that exists only to dodge argument-count limits or a one-per-request clone (e.g. an ephemeral `struct X<'a>` in `service.rs` or `repository.rs`). Use domain value objects, entity builders, or an owned `XModuleDeps`.
+
 ---
 
 ## 3. Verification and Completion
@@ -377,11 +385,11 @@ Do not invent scripts or install external tooling. Deployments, migrations, and 
 The battery is executable, not prose: **`scripts/audit.sh`**. Run it as-is; never retype its greps.
 
 ```bash
-bash scripts/audit.sh            # 26 hard checks (exit 1 on any match) + 5 inspections
+bash scripts/audit.sh            # 25 hard checks (exit 1 on any match) + 6 inspections
 bash scripts/audit.sh --quiet    # violations only, the mode the deploy gate uses
 ```
 
-It prints every check with its own description, so the list does not live here. Inspections (A–E) print for human review and never fail the build; read them — A verifies the module graph stays acyclic, E surfaces visibility drift.
+It prints every check with its own description, so the list does not live here. Inspections (A–F) print for human review and never fail the build; read them — A verifies the module graph stays acyclic, D surfaces the largest files for a cohesion check, E catches `Paginated<T>` crossing the repository boundary, and F lists every explicit lifetime for Guardrail 19.
 
 When a guardrail changes, update the script in the same delivery. The script is what actually runs.
 

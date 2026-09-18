@@ -35,7 +35,7 @@ A type enters here only with two consumers (two modules, or a module and a vendo
 
 ### 2.2 Archetypes
 
-A module has no fixed file list; it takes the shape its responsibility needs.
+A module ships the files of its archetype that its responsibility needs. The archetype set is the template: no ad-hoc files, and no empty placeholder to satisfy the shape. Inside each file, one family of activities end to end (`AGENTS.md` Guardrail 15).
 
 | Archetype | Files | Example | Hard rule |
 | :-------- | :---- | :------ | :-------- |
