@@ -15,6 +15,7 @@ pub struct AuthPrincipal {
     pub provider: &'static str,
     pub client_id: String,
     pub user_id: Option<String>,
+    pub email: Option<String>,
     pub permissions: HashSet<String>,
     pub token: String,
 }
@@ -26,6 +27,7 @@ impl fmt::Debug for AuthPrincipal {
             .field("provider", &self.provider)
             .field("client_id", &self.client_id)
             .field("user_id", &self.user_id)
+            .field("email", &self.email)
             .field("permissions", &self.permissions)
             .field("token", &"<redacted>")
             .finish()

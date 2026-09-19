@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod context;
 pub mod db;
 pub mod http;
 #[macro_use]
@@ -16,9 +17,11 @@ pub use telemetry::tracer;
 
 // Direct type re-exports
 pub use auth::{
-    AuthPrincipal, AuthProvider, JwtJwksAuthProvider, JwtJwksClaims, TaskToken, auth_middleware,
-    extract_bearer_token, require_any_permission, require_permission, task_auth_middleware,
+    Actor, AuthPrincipal, AuthProvider, JwtJwksAuthProvider, JwtJwksClaims, TaskToken,
+    auth_middleware, extract_bearer_token, require_any_permission, require_permission,
+    task_auth_middleware,
 };
+pub use context::{Context, ContextRequestExt, ContextValue};
 pub use db::{MongoProvider, QueryResult, RedisProvider};
 pub use http::{
     ApiResponse, AppError, AppResult, CONTENT_TYPE_MSGPACK, ContextExt, ErrorKind, ErrorSeverity,

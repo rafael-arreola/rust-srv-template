@@ -8,7 +8,9 @@ use axum::{
     response::Response,
 };
 
+use crate::core::auth::actor::Actor;
 use crate::core::auth::principal::AuthPrincipal;
+use crate::core::context::ContextRequestExt;
 use crate::core::error::{AppError, AppResult};
 
 /// Puerto de autenticación seleccionado una vez al arranque.
@@ -59,6 +61,7 @@ pub async fn auth_middleware(
 ) -> Result<Response, AppError> {
     let token = extract_bearer_token(req.headers())?;
     let principal = provider.authenticate(token).await?;
+    req.context().insert(Actor::from(&principal));
     req.extensions_mut().insert(principal);
     Ok(next.run(req).await)
 }

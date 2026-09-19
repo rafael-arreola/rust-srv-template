@@ -5,6 +5,7 @@ use super::dto::{
 };
 use super::entity::User;
 use super::repository::UserRepository;
+use crate::core::context::Context;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
@@ -18,7 +19,11 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn create_user(&self, input: CreateUserInput) -> AppResult<UserOutput> {
+    pub async fn create_user(
+        &self,
+        _ctx: &Context,
+        input: CreateUserInput,
+    ) -> AppResult<UserOutput> {
         let existing = self.repo.find_by_email(&input.email).await?;
         if existing.is_some() {
             return Err(AppError::duplicate("User", "email", input.email));
@@ -31,7 +36,7 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all, fields(%id))]
-    pub async fn get_user(&self, id: &str) -> AppResult<UserOutput> {
+    pub async fn get_user(&self, _ctx: &Context, id: &str) -> AppResult<UserOutput> {
         let user =
             self.repo.find_by_id(id).await?.ok_or_else(|| AppError::not_found("User", id))?;
 
@@ -39,7 +44,11 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all)]
-    pub async fn list_users(&self, query: &PaginationQuery) -> AppResult<PaginatedUsers> {
+    pub async fn list_users(
+        &self,
+        _ctx: &Context,
+        query: &PaginationQuery,
+    ) -> AppResult<PaginatedUsers> {
         let res = self.repo.list(query.skip(), query.limit()).await?;
 
         let outputs = res.items.into_iter().map(Into::into).collect();
@@ -47,7 +56,12 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all, fields(%id))]
-    pub async fn update_user(&self, id: &str, input: UpdateUserInput) -> AppResult<UserOutput> {
+    pub async fn update_user(
+        &self,
+        _ctx: &Context,
+        id: &str,
+        input: UpdateUserInput,
+    ) -> AppResult<UserOutput> {
         let mut user =
             self.repo.find_by_id(id).await?.ok_or_else(|| AppError::not_found("User", id))?;
 
@@ -70,7 +84,7 @@ impl UserService {
     }
 
     #[tracing::instrument(skip_all, fields(%id))]
-    pub async fn delete_user(&self, id: &str) -> AppResult<()> {
+    pub async fn delete_user(&self, _ctx: &Context, id: &str) -> AppResult<()> {
         let deleted = self.repo.delete(id).await?;
         if !deleted {
             return Err(AppError::not_found("User", id));

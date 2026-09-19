@@ -33,6 +33,8 @@ pub struct JwtJwksClaims {
     #[serde(default)]
     pub client_id: Option<String>,
     #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
     pub scope: Option<String>,
     #[serde(default)]
     pub permissions: Vec<String>,
@@ -142,6 +144,7 @@ impl AuthProvider for JwtJwksAuthProvider {
             provider: "jwt-jwks",
             client_id: client_id.unwrap_or_else(|| "unknown_client".to_string()),
             user_id: token_data.claims.sub.clone(),
+            email: token_data.claims.email.clone(),
             permissions: token_data.claims.all_permissions(),
             token: clean_token.to_string(),
         })

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use super::dto::{CheckoutInput, CheckoutOutput};
+use crate::core::context::Context;
 use crate::core::error::{AppResult, ContextExt};
 use crate::modules::orders::dto::CreateOrderInput;
 use crate::modules::orders::service::OrderService;
@@ -21,11 +22,11 @@ impl CheckoutWorkflow {
     }
 
     #[tracing::instrument(skip_all, fields(user_id = %input.user_id))]
-    pub async fn execute(&self, input: CheckoutInput) -> AppResult<CheckoutOutput> {
+    pub async fn execute(&self, ctx: &Context, input: CheckoutInput) -> AppResult<CheckoutOutput> {
         // 1. Validar precondición en el módulo base Users
         let user = self
             .user_service
-            .get_user(&input.user_id)
+            .get_user(ctx, &input.user_id)
             .await
             .attach_context("Error verificando usuario para checkout")
             .attach_public("No fue posible validar la cuenta de usuario para el checkout")?;
@@ -41,7 +42,7 @@ impl CheckoutWorkflow {
 
         let order = self
             .order_service
-            .create_order(order_input)
+            .create_order(ctx, order_input)
             .await
             .attach_context("Fallo creando la orden durante el proceso de checkout")?;
 

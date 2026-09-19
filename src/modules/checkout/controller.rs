@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::dto::{CheckoutInput, CheckoutOutput};
 use super::workflow::CheckoutWorkflow;
+use crate::core::context::Context;
 use crate::core::error::AppError;
 use crate::core::extractors::ValidatedBody;
 use crate::core::response::ApiResponse;
@@ -13,9 +14,10 @@ pub fn routes(workflow: Arc<CheckoutWorkflow>) -> Router {
 
 #[tracing::instrument(skip_all)]
 async fn execute_checkout(
+    ctx: Context,
     State(workflow): State<Arc<CheckoutWorkflow>>,
     ValidatedBody(input): ValidatedBody<CheckoutInput>,
 ) -> Result<ApiResponse<CheckoutOutput>, AppError> {
-    let output = workflow.execute(input).await?;
+    let output = workflow.execute(&ctx, input).await?;
     Ok(ApiResponse::created(output))
 }

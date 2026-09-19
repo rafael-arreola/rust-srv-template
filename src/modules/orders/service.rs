@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::dto::{CreateOrderInput, OrderOutput};
 use super::entity::{Order, OrderItem};
 use super::repository::OrderRepository;
+use crate::core::context::Context;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
@@ -16,7 +17,11 @@ impl OrderService {
     }
 
     #[tracing::instrument(skip_all, fields(user_id = %input.user_id))]
-    pub async fn create_order(&self, input: CreateOrderInput) -> AppResult<OrderOutput> {
+    pub async fn create_order(
+        &self,
+        _ctx: &Context,
+        input: CreateOrderInput,
+    ) -> AppResult<OrderOutput> {
         let user_name = input.user_name.unwrap_or_else(|| "Customer".to_string());
 
         let items: Vec<OrderItem> = input
@@ -33,7 +38,7 @@ impl OrderService {
     }
 
     #[tracing::instrument(skip_all, fields(%id))]
-    pub async fn get_order(&self, id: &str) -> AppResult<OrderOutput> {
+    pub async fn get_order(&self, _ctx: &Context, id: &str) -> AppResult<OrderOutput> {
         let order =
             self.repo.find_by_id(id).await?.ok_or_else(|| AppError::not_found("Order", id))?;
 

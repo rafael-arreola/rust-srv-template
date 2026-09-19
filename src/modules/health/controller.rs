@@ -1,15 +1,16 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use mongodb::{Database, bson};
 
+use crate::core::context::Context;
 use crate::core::http::shutdown::is_draining;
 
 #[tracing::instrument(skip_all)]
-pub async fn healthz() -> impl IntoResponse {
+pub async fn healthz(_ctx: Context) -> impl IntoResponse {
     StatusCode::OK
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn readyz(State(db): State<Database>) -> impl IntoResponse {
+pub async fn readyz(_ctx: Context, State(db): State<Database>) -> impl IntoResponse {
     if is_draining() {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
