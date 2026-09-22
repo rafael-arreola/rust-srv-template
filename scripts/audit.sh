@@ -221,6 +221,12 @@ inspect_block E "Paginated<T> cruzando la frontera del repositorio (debe ser Que
 inspect_block F "lifetimes explícitos: cada coincidencia debe justificar que no hay alternativa (Guardrail 19)" \
   "$(grep -rnE "<'[a-z]" src "${RS[@]}" | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)')"
 
+# El dinero nunca es punto flotante (Guardrail 13). Inspección y no check duro: `f64` es legítimo para
+# magnitudes que no son dinero (porcentajes, latencias, coordenadas), así que la coincidencia exige
+# revisión humana en lugar de abortar el build.
+inspect_block G "dinero en punto flotante en modules/shared: debe ser enteros de unidades menores + Currency (Guardrail 13)" \
+  "$(grep -rnE '\b(f32|f64)\b' src/modules src/shared "${RS[@]}" | grep -vE '^[^:]+:[0-9]+:\s*(//|//!|/\*|\*)')"
+
 # ---------------------------------------------------------------------------
 
 if [[ $FAILURES -gt 0 ]]; then

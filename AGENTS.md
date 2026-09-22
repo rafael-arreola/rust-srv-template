@@ -86,17 +86,17 @@ Non-obvious facts that rules depend on:
 
 ### 1.2 Directory Taxonomy and Boundary Roles
 
-| Zone / Path     | Architectural Role                                                                          | Boundary & Dependency Rules                                                                                                      |
-| :-------------- | :------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------- |
-| `build/`        | Containerization (`Dockerfile`, `cargo-chef`, distroless) and CI/CD (`cloudbuild.yaml`).    | Isolated from compiler source tree.                                                                                              |
-| `scripts/`      | Executable invariant battery (`audit.sh`) run by the deploy gate.                           | Mirrors §3.2; edit the script and §3.2 together.                                                                                 |
-| `src/main.rs`   | Entrypoint: crypto provider, tracing init, DB connection pool, `ExitCode`.                  | Bootstraps composition root with pool and guards.                                                                                |
-| `src/app.rs`    | Composition root: `AppContext` (live resources), module wiring, global router & middleware. | Top-down wiring; zero business logic; reads config via `config::get()`.                                                          |
-| `src/config.rs` | Immutable typed environment variables via `OnceLock` (fail-fast startup).                   | Business-agnostic configuration state. **REQUIRED:** `require_env`/`require_env_parsed`; defaults only through a visible helper. |
-| `src/core/`     | Technical infrastructure (`db`, `http`, `context`, `telemetry`, `net`, `macros`).           | **FORBIDDEN:** importing `crate::shared`, `crate::modules`, or `crate::vendors`. May read `config` (§2 Guardrail 3).             |
-| `src/shared/`   | Shared Kernel: pure business vocabulary (`geo.rs`, `money.rs`, value objects).              | Leaf crate; static rules only. **FORBIDDEN:** I/O, DB, `modules`, `vendors`.                                                     |
-| `src/vendors/`  | Adapters for external APIs/SDKs (`carrier/`, gateways, cloud tasks).                        | Owns external DTOs; receives the injected `Arc<HttpClient>`; maps to `AppError`.                                                 |
-| `src/modules/`  | Self-contained domain vertical slices (`health/`, `users/`, `orders/`, `checkout/`).        | Acyclic DAG; encapsulated state; internal files declared as private `mod`.                                                       |
+| Zone / Path     | Architectural Role                                                                          | Boundary & Dependency Rules                                                 |
+| :-------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------- |
+| `build/`        | Containerization (`Dockerfile`, `cargo-chef`, distroless) and CI/CD (`cloudbuild.yaml`).    | Isolated from compiler source tree.                                         |
+| `scripts/`      | Executable invariant battery (`audit.sh`) run by the deploy gate.                           | Mirrors §3.2; edit the script and §3.2 together.                            |
+| `src/main.rs`   | Entrypoint: crypto provider, tracing init, DB connection pool, `ExitCode`.                  | Bootstraps the composition root (Guardrail 7).                              |
+| `src/app.rs`    | Composition root: `AppContext` (live resources), module wiring, global router & middleware. | Top-down wiring; zero business logic (Guardrails 7, 10).                    |
+| `src/config.rs` | Immutable typed environment variables via `OnceLock` (fail-fast startup).                   | Business-agnostic configuration state (Guardrail 7).                        |
+| `src/core/`     | Technical infrastructure (`db`, `http`, `context`, `telemetry`, `net`, `macros`).           | Business-agnostic infrastructure; may read `config` (Guardrails 1, 3).      |
+| `src/shared/`   | Shared Kernel: pure business vocabulary (`geo.rs`, `money.rs`, value objects).              | Leaf crate, static rules only (Guardrail 13).                               |
+| `src/vendors/`  | Adapters for external APIs/SDKs (`carrier/`, gateways, cloud tasks).                        | Owns external DTOs; receives the injected `Arc<HttpClient>` (Guardrail 12). |
+| `src/modules/`  | Self-contained domain vertical slices (`health/`, `users/`, `orders/`, `checkout/`).        | Self-contained, internally private, acyclic (Guardrails 2, 3).              |
 
 #### Module Slice Layout (`src/modules/<name>/`)
 
@@ -113,23 +113,23 @@ Archetype 1 (persistent slice). `PROJECT.md` §2.2 holds the file set of every o
 | `repository.rs`              | Collection access, idempotent index creation inside `new(&db)`, criteria execution.                           | private    |
 | `controller.rs`              | Resource-relative routes, project extractors, `ApiResponse` envelope.                                         | private    |
 
-`model.rs` is **FORBIDDEN**. Logical deletion (`deleted_at`) is a per-slice choice, not a rule: adopt it only when the domain requires it, then apply it consistently inside that slice.
+`model.rs` is **FORBIDDEN**. Logical deletion (`deleted_at`) is a per-slice choice, not a rule (Guardrail 5).
 
 ### 1.4 Canonical Response Envelope
 
-Four shapes, no fifth. `trace_id` is always the 32-hex W3C id of the current span.
+Four shapes, no fifth. `trace_id` is always the 32-hex W3C id of the current span — never a sentinel, never fabricated. An all-zero trace id is invalid per W3C and **FORBIDDEN**: a handler that runs outside a span is a wiring defect reported in the logs, not a defect the payload conceals behind 32 zeros.
 
 ```jsonc
 // ok(data) / created(data)            -> 200 / 201
 { "trace_id": "018f3a...", "data": { "id": "..." } }
-// paginated(items, total, page, limit) -> 200
+// ok(Paginated<T>)                    -> 200
 { "trace_id": "018f3a...", "data": { "data": [], "total": 100, "total_pages": 5, "page": 1, "limit": 20 } }
 // empty()                              -> 204, no body
 // Err(AppError)                        -> status from the error kind
 { "trace_id": "018f3a...", "data": { "message": "User not found" }, "cause": "NOT_FOUND" }
 ```
 
-`total_pages` is `total.div_ceil(limit)`; pagination is always `page`/`limit: u64`. `data.breadcrumbs` appears only when public context was stacked with `.attach_public(...)`. Worker acknowledgements use `MessageOutput`/`TaskSuccessOutput`, never untyped `serde_json::Value`.
+`total_pages` is `total.div_ceil(limit)`. The two ends of pagination use different widths deliberately: `PaginationQuery` accepts `page`/`limit` as `u32` (no client asks for page 2^64), while `Paginated<T>` serializes `page`/`limit`/`total`/`total_pages` as `u64` and is built through `Paginated::from_query(QueryResult<T>, &PaginationQuery)`, never assembled field by field. `data.breadcrumbs` appears only when public context was stacked with `.attach_public(...)`. Worker acknowledgements use `MessageOutput`/`TaskSuccessOutput`, never untyped `serde_json::Value`.
 
 ---
 
@@ -237,6 +237,8 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 - **REQUIRED:** `ValidatedBody<T>` for content-negotiated JSON/MessagePack with validation; `MsgPack<T>` for direct MessagePack transport. Canonical MIME is `application/vnd.msgpack`.
 - **REQUIRED:** the composition root (`src/app.rs`) registers `.fallback(fallback::not_found)` and `.method_not_allowed_fallback(fallback::method_not_allowed)` **after** the whole route tree is mounted, because `method_not_allowed_fallback` only reaches already-registered `MethodRouter`s. This keeps every 404 and 405 inside the uniform envelope while preserving the `Allow` header and MessagePack negotiation.
 - **Multi-prefix composition.** A service may expose several orthogonal surfaces — `/api/v1` (public API, user auth + RBAC), `/internal/tasks` (HTTP push workers, internal task token, never under the public prefix), and `/` (probes and technical endpoints). Policies (auth, token, size/rate limits) attach **per prefix** in the composition root, never per module. Subroutes of an aggregate belong to the owning module: `/{id}/addresses` is nested by the parent's `controller.rs`, never patched from a leaf module that merely consumes it.
+- **Middleware composition is order-sensitive, and the order inverts between request and response.** `.layer()` wraps what came before it, so the layer applied **last is outermost**: it sees the request first and the response last. The transport stack is fixed in `ServerLauncher::run` and runs outermost → innermost: CORS → body limit → decompression → compression → `trace_context` → `request_timeout` → `msgpack_negotiation` → router. Content negotiation sits **inside** compression on purpose, so the body is re-encoded once and compressed once.
+- **Consequence to respect when adding a layer:** any layer placed **outside** `msgpack_negotiation` that synthesizes its own response — a timeout, a rate limiter, a circuit breaker — answers in JSON even to a client that sent `Accept: application/vnd.msgpack`, because negotiation already unwound before that layer produced anything. Either place such a layer inside negotiation, or accept the JSON answer deliberately. A synthesized response also bypasses `#[tracing::instrument]` spans declared inside the layers it wraps.
 
 ### Guardrail 11 — Code economy
 
@@ -244,6 +246,8 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 - **Allowed dynamic-polymorphism exceptions (closed list, exhaustive):** provider ports selected once at startup (for example, an authentication provider) and `erased_serde::Serialize` in the response envelope. No other exception exists; "genuinely unavoidable" is not a valid justification.
 - **REQUIRED:** the smallest cohesive change that solves the problem. A new module, helper, trait, wrapper, generic, or config knob needs a concrete reason; "it reads cleaner" and "it might be reused" are not reasons. Add the abstraction when the second consumer arrives, not before.
 - No dead code, orphaned functions, speculative abstractions, temporary files, or debug residue (`println!`, `dbg!`) in delivered work.
+- **The gate does not see dead code in a binary crate.** `main.rs` is the root and every `pub` item is reachable from it, so `dead_code` and `clippy -- -D warnings` stay silent about an exported helper nobody calls. A `pub` constructor that duplicates a path an existing caller already covers is dead code the battery will never report; remove it deliberately.
+- **`PROJECT.md` §2.3 is the only sanctioned home for unused surface.** A capability listed there is a deliberate, documented port awaiting wiring. A helper that shadows an existing one is not a capability — it is residue, and it belongs in neither place.
 
 ### Guardrail 12 — External integrations (vendors)
 
@@ -258,6 +262,7 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 - **FORBIDDEN:** importing `crate::modules`, `crate::vendors`, `bson`, `mongodb`, or `axum` from `src/shared/`. Its only admitted internal dependency is `crate::core::error`.
 - **FORBIDDEN:** hosting services, repositories, behavior traits, or loose utility files (`utils.rs`, `helpers.rs`) in `shared`. The only admitted logic is pure static methods on the type itself, grouped by concept (`geo.rs`, `money.rs`, `contact.rs`).
 - **Two-consumer rule:** a type enters `shared` when two modules, or a module and a vendor, consume it. A single-consumer type stays in that module even if it looks generic.
+- **REQUIRED — monetary representation.** A monetary amount is never `f32` or `f64`, in `entity.rs`, `document.rs`, or `dto.rs`. Model it as an integer count of **minor units** (`i64`: cents for MXN/COP/PEN, whole pesos for CLP) paired with its `Currency`, and treat `Currency::minor_unit_digits()` as the only scaling authority — the integer and the currency move together, because the same number means different magnitudes in MXN and CLP. Arithmetic is checked (`checked_add`, `checked_mul`): a currency mismatch or an overflow is an `AppError`, never a silent wrap. **Why:** binary floating point cannot represent decimal money exactly, and a `.sum()` over line items accumulates the error; the drift surfaces as cents that do not reconcile against the invoice. A `Money { minor_units, currency }` value object graduates from a slice to this module the moment a second consumer needs it, under the rule above.
 - **Additive policy for persisted enums:** the serde representation is a stable public contract affecting every collection that stores it. **FORBIDDEN:** renaming or removing a variant while documents still contain it; retire a variant by keeping it and marking it inactive. Changing `rename_all` requires a data migration.
 - **Vendor boundary:** a vendor may consume `shared` types but maps them at its own boundary to the provider's codes (for example `MX` to `MEX`). The vendor's external DTO is the provider's contract, not the business's.
 
@@ -367,13 +372,16 @@ Verify work empirically before closure. A success claim requires an observed zer
 ### 3.1 Mandatory verification loop
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo check --all-targets
-bash scripts/audit.sh
+cargo fmt --check                            # cheap: no compile
+bash scripts/audit.sh                        # cheap: greps the source, no compile
+cargo clippy --all-targets -- -D warnings    # the one that compiles and type-checks
 ```
 
-These four are exactly the gates that `build/Dockerfile` runs in its builder stage: if any is red, no image is produced and the deploy cannot happen. Reproduce them locally before claiming completion.
+These three mirror the builder stage of `build/Dockerfile`, in its deliberate order (cheap gates first, then the one that compiles): if any is red, no image is produced and the deploy cannot happen. Reproduce them before claiming completion.
+
+- **`cargo check` is deliberately absent from the loop.** `clippy` drives the same type-checker, so `cargo check --all-targets` buys no diagnostic and pays a second full compile — the dominant cost of the loop on this codebase. Keep it only as the fallback when the `clippy` component is not installed.
+- **Proportional validation.** After each edit, run only the cheapest gate that can catch that class of failure: formatting change → `cargo fmt`, code change → `cargo clippy`. Run the whole loop once, before claiming completion, not after every step.
+- **What the image adds beyond the loop:** `cargo build --release` (link errors, release-only `cfg`) and `cargo deny check advisories bans sources`. Run both when `Cargo.toml`, `Cargo.lock`, or anything that can affect linking is touched. The image runs `clippy` with `--release`; the debug run is equivalent for lints unless a `cfg` depends on the profile.
 
 The repository ships **no test suite** (tests are Protected, §0.2), so `cargo test` is not part of the loop and proves nothing until I authorize one. For behavioral changes, exercise the endpoint or command and observe the output.
 
@@ -384,17 +392,17 @@ Do not invent scripts or install external tooling. Deployments, migrations, and 
 The battery is executable, not prose: **`scripts/audit.sh`**. Run it as-is; never retype its greps.
 
 ```bash
-bash scripts/audit.sh            # 25 hard checks (exit 1 on any match) + 6 inspections
+bash scripts/audit.sh            # 25 hard checks (exit 1 on any match) + 7 inspections
 bash scripts/audit.sh --quiet    # violations only, the mode the deploy gate uses
 ```
 
-It prints every check with its own description, so the list does not live here. Inspections (A–F) print for human review and never fail the build; read them — A verifies the module graph stays acyclic, D surfaces the largest files for a cohesion check, E catches `Paginated<T>` crossing the repository boundary, and F lists every explicit lifetime for Guardrail 19.
+It prints every check with its own description, so the list does not live here. Inspections (A–G) print for human review and never fail the build; read them — A verifies the module graph stays acyclic, D surfaces the largest files for a cohesion check, E catches `Paginated<T>` crossing the repository boundary, F lists every explicit lifetime for Guardrail 19, and G surfaces floating-point money in `modules` and `shared` for the Guardrail 13 rule.
 
 When a guardrail changes, update the script in the same delivery. The script is what actually runs.
 
 ### 3.3 When a check is red
 
-- `cargo fmt --check`: run `cargo fmt` and re-verify. `cargo check`/`clippy`: read the diagnostic, fix the root cause, re-run the whole loop. **FORBIDDEN:** silencing with `#[allow(...)]`, `let _ = ...`, empty `Err(_) => {}`, or fake defaults.
+- `cargo fmt --check`: run `cargo fmt` and re-verify. `cargo clippy`: read the diagnostic, fix the root cause, re-run that gate, and close with the full §3.1 loop. **FORBIDDEN:** silencing with `#[allow(...)]`, `let _ = ...`, empty `Err(_) => {}`, or fake defaults.
 - `scripts/audit.sh` reports `[FAIL]`: fix the source, never the check. Weakening or deleting a check to turn the battery green is itself a guardrail violation; if a rule is genuinely wrong, tell me and wait.
 - A failure proven pre-existing and not worsened by your change does not block completion: report it with the exact command and error.
 - A check that cannot run (missing dependency or credential) is reported with the exact blocker. **Never present an unrun check as passing.**
@@ -404,7 +412,7 @@ When a guardrail changes, update the script in the same delivery. The script is 
 Work is complete when:
 
 1. My requested observable behavior is implemented with zero pending cases.
-2. The four commands in §3.1 exit 0 (or failures are proven pre-existing and external).
+2. The gates in §3.1 exit 0 (or failures are proven pre-existing and external).
 3. Final diff matches my requested scope, preserves my modifications, and leaves zero debug/dead code.
 4. Knowledge travels with the change: a module's `//!` header when its intent or invariants move; `PROJECT.md` when the catalog, a cross-cutting rule, a vendor, a capability, or a Shared Kernel type changes; `scripts/audit.sh` when a guardrail changes.
 5. All unavailable checks or external blockers are reported to me precisely.
