@@ -22,7 +22,7 @@ pub use auth::{
     task_auth_middleware,
 };
 pub use context::{Context, ContextRequestExt, ContextValue};
-pub use db::{MongoProvider, QueryResult, RedisProvider};
+pub use db::{MongoProvider, QueryResult, RedisProvider, parse_object_id};
 pub use http::{
     ApiResponse, AppError, AppResult, CONTENT_TYPE_MSGPACK, ContextExt, ErrorKind, ErrorSeverity,
     MessageOutput, MsgPack, Paginated, PaginationQuery, PathParam, ServerLauncher,

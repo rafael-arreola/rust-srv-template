@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::dto::{CreateUserInput, PaginatedUsers, PaginationQuery, UpdateUserInput, UserOutput};
 use super::service::UserService;
 use crate::core::context::Context;
-use crate::core::error::AppError;
+use crate::core::error::AppResult;
 use crate::core::extractors::{PathParam, ValidatedBody, ValidatedQuery};
 use crate::core::response::ApiResponse;
 
@@ -24,7 +24,7 @@ async fn create_user(
     ctx: Context,
     State(service): State<Arc<UserService>>,
     ValidatedBody(input): ValidatedBody<CreateUserInput>,
-) -> Result<ApiResponse<UserOutput>, AppError> {
+) -> AppResult<ApiResponse<UserOutput>> {
     let output = service.create_user(&ctx, input).await?;
     Ok(ApiResponse::created(output))
 }
@@ -34,7 +34,7 @@ async fn get_user(
     ctx: Context,
     State(service): State<Arc<UserService>>,
     PathParam(id): PathParam<String>,
-) -> Result<ApiResponse<UserOutput>, AppError> {
+) -> AppResult<ApiResponse<UserOutput>> {
     let output = service.get_user(&ctx, &id).await?;
     Ok(ApiResponse::ok(output))
 }
@@ -44,7 +44,7 @@ async fn list_users(
     ctx: Context,
     State(service): State<Arc<UserService>>,
     ValidatedQuery(query): ValidatedQuery<PaginationQuery>,
-) -> Result<ApiResponse<PaginatedUsers>, AppError> {
+) -> AppResult<ApiResponse<PaginatedUsers>> {
     let paginated = service.list_users(&ctx, &query).await?;
     Ok(ApiResponse::ok(paginated))
 }
@@ -55,7 +55,7 @@ async fn update_user(
     State(service): State<Arc<UserService>>,
     PathParam(id): PathParam<String>,
     ValidatedBody(input): ValidatedBody<UpdateUserInput>,
-) -> Result<ApiResponse<UserOutput>, AppError> {
+) -> AppResult<ApiResponse<UserOutput>> {
     let output = service.update_user(&ctx, &id, input).await?;
     Ok(ApiResponse::ok(output))
 }
@@ -65,7 +65,7 @@ async fn delete_user(
     ctx: Context,
     State(service): State<Arc<UserService>>,
     PathParam(id): PathParam<String>,
-) -> Result<ApiResponse<()>, AppError> {
+) -> AppResult<ApiResponse<()>> {
     service.delete_user(&ctx, &id).await?;
     Ok(ApiResponse::empty())
 }

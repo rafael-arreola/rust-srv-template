@@ -46,7 +46,7 @@ A module ships the files of its archetype that its responsibility needs. The arc
 | **4b · HTTP Push Worker**         | `mod`, `controller`, `service`, `dto`                                                 | —                 | Internal task token; mounted outside `/api/v1`.                                                            |
 | **5 · Bulk / Ingestion Pipeline** | `mod`, `controller`, `service`, `pipeline`, `repository`, `entity`, `document`, `dto` | —                 | Chunking and enqueuing in `pipeline.rs`; `strategies/` for polymorphism; `csv.rs` only with an own parser. |
 
-Trigger rule: arrives through a channel → 4a; arrives through HTTP → 4b. HTTP alone does not make a slice archetype 1 or 3. Naming: `workflow.rs`/`usecase.rs` for orchestrators, `contract.rs` for cross-module agreements, `command.rs` for private orchestration state.
+Trigger rule: arrives through a channel → 4a; arrives through HTTP → 4b. HTTP alone does not make a slice archetype 1 or 3. Naming: `workflow.rs` for orchestrators, `contract.rs` for cross-module agreements.
 
 ### 2.3 Optional Capabilities (shipped, not wired)
 

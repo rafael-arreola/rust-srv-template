@@ -1,11 +1,8 @@
-use mongodb::{
-    Collection, Database, IndexModel,
-    bson::{doc, oid::ObjectId},
-    options::IndexOptions,
-};
+use mongodb::{Collection, Database, IndexModel, bson::doc, options::IndexOptions};
 
 use super::document::OrderDocument;
 use super::entity::Order;
+use crate::core::db::parse_object_id;
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
@@ -57,8 +54,7 @@ impl OrderRepository {
 
     #[tracing::instrument(skip_all)]
     pub async fn find_by_id(&self, id: &str) -> AppResult<Option<Order>> {
-        let oid =
-            ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "Order", id))?;
+        let oid = parse_object_id("Order", id)?;
 
         let order = self
             .collection

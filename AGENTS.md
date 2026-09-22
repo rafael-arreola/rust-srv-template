@@ -112,7 +112,6 @@ Archetype 1 (persistent slice). `PROJECT.md` §2.2 holds the file set of every o
 | `document.rs` or `document/` | BSON storage schema (`_id`, `ObjectId`) with `from_domain`/`into_domain`. Imported only by `repository.rs`.   | private    |
 | `repository.rs`              | Collection access, idempotent index creation inside `new(&db)`, criteria execution.                           | private    |
 | `controller.rs`              | Resource-relative routes, project extractors, `ApiResponse` envelope.                                         | private    |
-| `command.rs` (optional)      | Internal command construction and multi-step state.                                                           | private    |
 
 `model.rs` is **FORBIDDEN**. Logical deletion (`deleted_at`) is a per-slice choice, not a rule: adopt it only when the domain requires it, then apply it consistently inside that slice.
 
@@ -280,7 +279,6 @@ Technical boundaries for autonomous implementation. Permission boundaries for Gi
 
   | Pattern                                  | Use it only when                                                              |
   | :--------------------------------------- | :---------------------------------------------------------------------------- |
-  | `command.rs`                             | A multi-step orchestration carries private state of its own.                  |
   | `pipeline.rs`                            | A flow has genuinely separable stages: chunking, payload generation, enqueue. |
   | `strategies/`                            | A real internal polymorphism: formatters, calculation or export engines.      |
   | `repository/{queries,mutations,bulk}.rs` | Read, write, and batch persistence are distinct families in this slice.       |

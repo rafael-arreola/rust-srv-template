@@ -10,4 +10,9 @@ impl<T> QueryResult<T> {
     pub fn new(items: Vec<T>, total: u64) -> Self {
         Self { items, total }
     }
+
+    /// Transforma los elementos del resultado aplicando una función sobre cada uno.
+    pub fn map<U>(self, f: impl FnMut(T) -> U) -> QueryResult<U> {
+        QueryResult { items: self.items.into_iter().map(f).collect(), total: self.total }
+    }
 }

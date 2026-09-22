@@ -49,10 +49,8 @@ impl UserService {
         _ctx: &Context,
         query: &PaginationQuery,
     ) -> AppResult<PaginatedUsers> {
-        let res = self.repo.list(query.skip(), query.limit()).await?;
-
-        let outputs = res.items.into_iter().map(Into::into).collect();
-        Ok(Paginated::new(outputs, res.total, query.page(), query.limit()))
+        let res = self.repo.list(query.skip(), query.limit().into()).await?.map(Into::into);
+        Ok(Paginated::from_query(res, query))
     }
 
     #[tracing::instrument(skip_all, fields(%id))]

@@ -1,13 +1,9 @@
 use futures::stream::TryStreamExt;
-use mongodb::{
-    Collection, Database, IndexModel,
-    bson::{doc, oid::ObjectId},
-    options::IndexOptions,
-};
+use mongodb::{Collection, Database, IndexModel, bson::doc, options::IndexOptions};
 
 use super::document::UserDocument;
 use super::entity::User;
-use crate::core::db::query::QueryResult;
+use crate::core::db::{QueryResult, parse_object_id};
 use crate::core::error::{AppError, AppResult};
 
 #[derive(Clone)]
@@ -62,7 +58,7 @@ impl UserRepository {
 
     #[tracing::instrument(skip_all)]
     pub async fn find_by_id(&self, id: &str) -> AppResult<Option<User>> {
-        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+        let oid = parse_object_id("User", id)?;
 
         let user = self
             .collection
@@ -104,7 +100,7 @@ impl UserRepository {
 
     #[tracing::instrument(skip_all)]
     pub async fn update(&self, id: &str, user: &User) -> AppResult<bool> {
-        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+        let oid = parse_object_id("User", id)?;
 
         let doc = UserDocument::from_domain(user, Some(oid));
         let bson_doc = mongodb::bson::serialize_to_document(&doc)
@@ -123,7 +119,7 @@ impl UserRepository {
 
     #[tracing::instrument(skip_all)]
     pub async fn delete(&self, id: &str) -> AppResult<bool> {
-        let oid = ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", "User", id))?;
+        let oid = parse_object_id("User", id)?;
 
         let now = mongodb::bson::DateTime::from_chrono(chrono::Utc::now());
 

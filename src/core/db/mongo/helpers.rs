@@ -2,6 +2,8 @@ use bson::oid::ObjectId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::core::error::{AppError, AppResult};
+
 /// Identificador polimórfico para modelos MongoDB, capaz de serializar y deserializar
 /// transparentemente tanto `ObjectId` BSON como `String` nativo.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,4 +123,9 @@ where
             Ok(Some(bson::DateTime::from_chrono(dt)))
         }
     }
+}
+
+/// Parsea un identificador textual como [`ObjectId`] de MongoDB, mapeando errores a [`AppError::invalid_param`].
+pub fn parse_object_id(resource: &'static str, id: &str) -> AppResult<ObjectId> {
+    ObjectId::parse_str(id).map_err(|_| AppError::invalid_param("id", resource, id))
 }

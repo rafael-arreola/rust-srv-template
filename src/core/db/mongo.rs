@@ -4,6 +4,8 @@ use mongodb::{Client, Database, options::ClientOptions};
 pub mod error;
 pub mod helpers;
 
+pub use helpers::parse_object_id;
+
 #[derive(Clone)]
 pub struct MongoProvider {
     db: Database,
