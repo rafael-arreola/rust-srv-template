@@ -37,7 +37,8 @@ impl Env {
             mongo_url: require_env("MONGO_URL"),
             mongo_db: require_env("MONGO_DB"),
 
-            // Variables opcionales: default razonable y aviso visible en stderr.
+            // Variables opcionales: default razonable y aviso visible en stderr. `REDIS_URL` no
+            // tiene default: sin ella el servicio arranca sin Redis.
             port: optional_env_parsed("PORT", 3000, "3000"),
             service_env: optional_env("SERVICE_ENV", "DEV"),
             project_id: optional_env("PROJECT_ID", ""),
@@ -45,7 +46,9 @@ impl Env {
             redis_prefix: optional_env("REDIS_PREFIX", "service"),
             debug_level: optional_env("DEBUG_LEVEL", "info"),
             cors_origins: optional_env("CORS_ORIGINS", "*"),
-            drain_timeout_secs: optional_env_parsed("DRAIN_TIMEOUT_SECS", 10, "10"),
+            // 8 y no 10: Cloud Run manda SIGKILL 10 s después de SIGTERM, y tras el drenado aún
+            // hay que exportar las trazas pendientes. Un drenado de 10 s consume todo el margen.
+            drain_timeout_secs: optional_env_parsed("DRAIN_TIMEOUT_SECS", 8, "8"),
             request_timeout_secs: optional_env_parsed("REQUEST_TIMEOUT_SECS", 30, "30"),
             msgpack_enabled: optional_bool("ENABLE_MSGPACK", true),
         }

@@ -1,18 +1,16 @@
 //! # health
 //!
-//! **Intent:** liveness (`/healthz`) and readiness (`/readyz`) probes for the orchestrator.
-//! **Invariants:** `/readyz` answers 503 while draining or when MongoDB does not ping, so the
-//!   balancer stops routing before in-flight connections close.
-//! **Does not:** use the response envelope — probes answer bare status codes by design.
+//! **Intent:** a single liveness probe (`GET /healthz`) for the orchestrator.
+//! **Invariants:** answers 200 while the process serves and 503 once the shutdown signal arrived,
+//!   so a balancer that still holds open connections stops routing to them during the drain.
+//!   It never pings MongoDB: a dependency outage must not make a liveness probe restart the
+//!   process, which would only add a cold start to the incident.
+//! **Does not:** use the response envelope — orchestrators read only the status code.
 
 mod controller;
 
 use axum::{Router, routing::get};
-use mongodb::Database;
 
-pub fn router(db: Database) -> Router {
-    Router::new()
-        .route("/healthz", get(controller::healthz))
-        .route("/readyz", get(controller::readyz))
-        .with_state(db)
+pub fn router() -> Router {
+    Router::new().route("/healthz", get(controller::healthz))
 }

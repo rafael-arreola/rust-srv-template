@@ -37,12 +37,13 @@ impl fmt::Debug for AuthPrincipal {
 impl AuthPrincipal {
     /// Indica si el principal posee el permiso solicitado.
     ///
-    /// Un permiso vacío no exige nada y siempre se concede. El comodín `"*"` entre los permisos
-    /// concedidos autoriza cualquier solicitud.
+    /// Un permiso vacío se niega siempre: exigir `""` solo ocurre por una constante mal resuelta o
+    /// un error de cableado, y concederlo convertiría ese error en una ruta abierta a todos. El
+    /// comodín `"*"` entre los permisos concedidos autoriza cualquier solicitud.
     pub fn has_permission(&self, permission: &str) -> bool {
         let trimmed = permission.trim();
         if trimmed.is_empty() {
-            return true;
+            return false;
         }
         self.permissions.contains(trimmed) || self.permissions.contains("*")
     }

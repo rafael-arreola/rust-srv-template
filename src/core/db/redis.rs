@@ -27,10 +27,6 @@ impl RedisProvider {
         Ok(RedisProvider { connection: conn, prefix: prefix.to_string() })
     }
 
-    pub fn connection(&self) -> MultiplexedConnection {
-        self.connection.clone()
-    }
-
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
@@ -41,29 +37,30 @@ impl RedisProvider {
     }
 
     /// Obtiene el valor asociado a una clave. Retorna `None` si la clave no existe.
+    ///
+    /// Un fallo de Redis es un error de infraestructura de datos (500 con mensaje público
+    /// genérico); el nombre del servicio y la clave viajan solo en el detalle interno.
     pub async fn get(&self, key: &str) -> AppResult<Option<String>> {
         let mut conn = self.connection.clone();
-        let value: Option<String> = conn.get(key).await.map_err(|e| {
-            AppError::external_service("redis", format!("failed to get {key}: {e}"))
-        })?;
+        let value: Option<String> =
+            conn.get(key).await.map_err(|e| AppError::database(format!("redis GET {key}: {e}")))?;
         Ok(value)
     }
 
     /// Establece una clave con expiración en segundos.
     pub async fn set_ex(&self, key: &str, value: &str, ttl_seconds: u64) -> AppResult<()> {
         let mut conn = self.connection.clone();
-        let _: () = conn.set_ex(key, value, ttl_seconds).await.map_err(|e| {
-            AppError::external_service("redis", format!("failed to set {key}: {e}"))
-        })?;
+        let _: () = conn
+            .set_ex(key, value, ttl_seconds)
+            .await
+            .map_err(|e| AppError::database(format!("redis SETEX {key}: {e}")))?;
         Ok(())
     }
 
-    /// Elimina una clave.
     pub async fn del(&self, key: &str) -> AppResult<()> {
         let mut conn = self.connection.clone();
-        let _: () = conn.del(key).await.map_err(|e| {
-            AppError::external_service("redis", format!("failed to delete {key}: {e}"))
-        })?;
+        let _: () =
+            conn.del(key).await.map_err(|e| AppError::database(format!("redis DEL {key}: {e}")))?;
         Ok(())
     }
 }

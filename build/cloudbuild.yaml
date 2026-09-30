@@ -4,6 +4,15 @@
 #    scripts/audit.sh, clippy -D warnings y cargo deny. Si algo falla no se produce imagen
 #    y el deploy no puede ocurrir.
 # 3. Despliega en Google Cloud Run de forma idempotente.
+#
+# RESPONSABILIDAD DEL EQUIPO QUE CLONA EL TEMPLATE (validar con IT/Seguridad antes de producción):
+# - Exposición: `--allow-unauthenticated` publica el servicio en internet. `core::auth` viene
+#   desconectado, así que así desplegado cualquier endpoint responde sin autenticación. Cámbialo a
+#   `--no-allow-unauthenticated` (IAM / IAP / API Gateway delante) o conecta `core::auth` antes de
+#   desplegar.
+# - CORS: este pipeline no declara `CORS_ORIGINS`, y su default en `src/config.rs` es `*`. Declara
+#   los orígenes exactos (`--set-env-vars=CORS_ORIGINS=https://app.ejemplo.com,...`).
+# - `_SERVICE_ENV`, `_DEBUG_LEVEL`, cuenta de servicio y secretos son decisiones del servicio.
 steps:
   - id: "Building container image"
     name: "gcr.io/cloud-builders/docker"
@@ -19,7 +28,7 @@ steps:
           -t $_ARTIFACT_REGISTRY/$_SERVICE_NAME:$COMMIT_SHA \
           -f build/Dockerfile .
 
-  # 2. Deploy to Cloud Run
+  # 3. Deploy to Cloud Run
   - id: "deploy-service"
     name: "gcr.io/cloud-builders/gcloud"
     args:

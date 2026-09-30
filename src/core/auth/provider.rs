@@ -15,14 +15,15 @@ use crate::core::error::{AppError, AppResult};
 
 /// Puerto de autenticación seleccionado una vez al arranque.
 ///
-/// Es el único uso admitido de polimorfismo dinámico en esta capacidad: el proveedor concreto se
-/// decide en el composition root y se comparte como `Arc<dyn AuthProvider>`.
+/// El proveedor concreto se elige una sola vez en el composition root y se comparte como
+/// `Arc<dyn AuthProvider>`: el despacho dinámico cuesta una indirección por petición y permite
+/// cambiar de proveedor sin volver genérico el middleware.
 #[async_trait]
 pub trait AuthProvider: Send + Sync + 'static {
     /// Nombre estable del proveedor, útil para spans y diagnósticos.
     fn name(&self) -> &'static str;
 
-    /// Valida el token y resuelve la identidad autenticada.
+    /// Valida el token ya despojado del esquema `Bearer` y resuelve la identidad autenticada.
     async fn authenticate(&self, token: &str) -> AppResult<AuthPrincipal>;
 }
 
@@ -72,8 +73,8 @@ pub struct TaskToken(pub String);
 
 /// Middleware de autorización para tareas internas.
 ///
-/// Acepta el valor crudo o `Authorization: Bearer <token>`. Un token no configurado es un fallo de
-/// servidor, no un 401.
+/// Exige `Authorization: Bearer <token>` y compara en tiempo constante. Un token no configurado
+/// es un fallo de servidor, no un 401.
 pub async fn task_auth_middleware(
     State(token): State<TaskToken>,
     req: Request,
@@ -83,13 +84,22 @@ pub async fn task_auth_middleware(
         return Err(AppError::internal("task token is not configured"));
     }
 
-    let auth_header =
-        req.headers().get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or_default();
+    let presented = extract_bearer_token(req.headers())?;
 
-    let expected_bearer = format!("Bearer {}", token.0);
-    if auth_header != token.0.as_str() && auth_header != expected_bearer.as_str() {
+    if !constant_time_eq(presented.as_bytes(), token.0.as_bytes()) {
         return Err(AppError::unauthorized("Invalid task authorization token"));
     }
 
     Ok(next.run(req).await)
+}
+
+/// Comparación byte a byte sin salida temprana, para que el tiempo de respuesta no revele cuántos
+/// bytes iniciales del secreto acertó el cliente. `black_box` impide que el optimizador reintroduzca
+/// el cortocircuito. Solo la longitud se compara de forma directa, como hace `subtle`.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let difference = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(difference) == 0
 }

@@ -7,10 +7,9 @@ use crate::core::error::{AppError, ErrorKind};
 
 /// País de operación del negocio como catálogo cerrado (código ISO 3166-1 alpha-2).
 ///
-/// Catálogo de demostración del template: al inicializar un servicio real, ajustar las variantes
-/// a los países donde opera el negocio. La representación serde es el código en mayúsculas
-/// (`"MX"`), idéntica en JSON y BSON. Política aditiva: nunca eliminar ni renombrar variantes
-/// mientras existan documentos que las almacenen.
+/// Las variantes son países de ejemplo; un servicio real deja solo aquellos donde opera. La
+/// representación serde es el código en mayúsculas (`"MX"`), idéntica en JSON y BSON: un documento
+/// con una variante renombrada o eliminada deja de deserializar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Country {
@@ -34,7 +33,7 @@ impl Country {
         }
     }
 
-    /// Moneda de curso legal del país. Regla pura y estática derivada del propio tipo.
+    /// Moneda de curso legal del país.
     pub fn currency(self) -> Currency {
         match self {
             Self::Mx => Currency::Mxn,

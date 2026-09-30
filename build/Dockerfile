@@ -1,9 +1,9 @@
 ####################################################################################################
 ## Base Stage - Configures fast linker and certificates for all stages
 ####################################################################################################
-# La version del toolchain esta clavada y debe coincidir con rust-toolchain.toml:
-# `rust:bookworm` resolveria a la ultima stable y una release nueva podria romper
-# el deploy sin que ningun commit haya cambiado.
+# La versión del toolchain está clavada y coincide con rust-toolchain.toml:
+# `rust:bookworm` resolvería a la última stable y una release nueva podría romper
+# el deploy sin que ningún commit haya cambiado.
 FROM rust:1.98.1-bookworm AS base
 RUN update-ca-certificates
 
@@ -17,7 +17,7 @@ RUN rustup component add rustfmt clippy
 # cargo-chef is installed once here so planner and cacher reuse this cached layer
 RUN cargo install cargo-chef --version 0.1.71
 
-# cargo-deny escanea advisories de RUSTSEC, fuentes y dependencias comodin.
+# cargo-deny escanea advisories de RUSTSEC, fuentes y dependencias comodín.
 RUN cargo install cargo-deny --locked --version 0.20.2
 
 ####################################################################################################
@@ -53,6 +53,9 @@ COPY . .
 RUN cargo fmt --check
 RUN bash scripts/audit.sh --quiet
 RUN cargo clippy --release --all-targets -- -D warnings
+# Tests unitarios y HTTP en memoria. Los de integración llevan `#[ignore]` porque necesitan un
+# MongoDB desechable; aquí no hay ninguno y el build no depende de la red.
+RUN cargo test --release
 
 RUN cargo build --release
 

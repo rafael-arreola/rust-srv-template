@@ -15,14 +15,13 @@ pub use http::response;
 pub use http::server;
 pub use telemetry::tracer;
 
-// Direct type re-exports
 pub use auth::{
-    Actor, AuthPrincipal, AuthProvider, JwtJwksAuthProvider, JwtJwksClaims, TaskToken,
-    auth_middleware, extract_bearer_token, require_any_permission, require_permission,
+    Actor, AuthPrincipal, AuthProvider, JwtJwksAuthProvider, JwtJwksClaims, JwtJwksConfig,
+    TaskToken, auth_middleware, extract_bearer_token, require_any_permission, require_permission,
     task_auth_middleware,
 };
 pub use context::{Context, ContextRequestExt, ContextValue};
-pub use db::{MongoProvider, QueryResult, RedisProvider, parse_object_id};
+pub use db::{MongoProvider, QueryResult, RedisProvider, Store};
 pub use http::{
     ApiResponse, AppError, AppResult, CONTENT_TYPE_MSGPACK, ContextExt, ErrorKind, ErrorSeverity,
     MessageOutput, MsgPack, Paginated, PaginationQuery, PathParam, ServerLauncher,

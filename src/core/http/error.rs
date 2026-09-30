@@ -1,15 +1,13 @@
 use std::fmt;
 
+use super::response::ApiResponse;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use thiserror::Error;
-
-use super::response::ApiResponse;
 
 /// Taxonomía semántica de errores del sistema.
-#[derive(Error, Debug, Clone)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum ErrorKind {
     #[error("{entity} not found: {id}")]
     NotFound { entity: &'static str, id: String },
@@ -135,9 +133,10 @@ impl ErrorKind {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::BusinessRule(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Timeout { .. } => StatusCode::GATEWAY_TIMEOUT,
-            Self::ExternalService { .. } | Self::Database(_) | Self::Internal(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            // El fallo es de un servicio del que dependemos, no nuestro: 502 le dice al cliente
+            // (y a la alerta de SLO) que reintentar puede funcionar, cosa que un 500 no dice.
+            Self::ExternalService { .. } => StatusCode::BAD_GATEWAY,
+            Self::Database(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Custom { status, .. } => *status,
         }
     }
@@ -197,7 +196,6 @@ impl From<ErrorKind> for AppError {
 }
 
 impl AppError {
-    /// Retorna la variante semántica interna del error.
     pub fn kind(&self) -> &ErrorKind {
         &self.0.kind
     }
@@ -207,7 +205,6 @@ impl AppError {
         self.0.kind.code()
     }
 
-    /// Retorna el status HTTP correspondiente.
     pub fn status_code(&self) -> StatusCode {
         self.0.kind.status_code()
     }
@@ -230,7 +227,7 @@ impl AppError {
 
     /// Detalle técnico privado y específico para observabilidad interna y debugging.
     /// Si se especificó un detalle interno vía `.with_internal(...)`, se retorna dicho valor.
-    /// De lo contrario, se retorna la representación textual de la causa base (`self.kind.to_string()`).
+    /// De lo contrario, se retorna la representación textual de la causa base (`kind.to_string()`).
     /// Si se acumularon trazas de contexto (`.attach_context(...)`), se adjuntan en la salida.
     pub fn internal_detail(&self) -> String {
         let base = if let Some(ref detail) = self.0.internal_detail {
@@ -290,7 +287,7 @@ impl AppError {
     /// - Elemento 0: La causa raíz original (detalle técnico base).
     /// - Elementos 1..N: Cada contexto agregado durante el proceso de rebote ascendente.
     pub fn full_trace(&self) -> Vec<String> {
-        let mut trace = Vec::with_capacity(1 + self.0.breadcrumbs.len());
+        let mut trace = Vec::with_capacity(self.0.breadcrumbs.len().saturating_add(1));
         let base = if let Some(ref detail) = self.0.internal_detail {
             detail.clone()
         } else {
@@ -381,14 +378,6 @@ impl AppError {
         ErrorKind::NotFound { entity, id: id.into() }.into()
     }
 
-    pub fn duplicate(entity: &'static str, field: &'static str, value: impl Into<String>) -> Self {
-        ErrorKind::AlreadyExists {
-            entity,
-            details: format!("{} '{}' already in use", field, value.into()),
-        }
-        .into()
-    }
-
     pub fn already_exists(entity: &'static str, details: impl Into<String>) -> Self {
         ErrorKind::AlreadyExists { entity, details: details.into() }.into()
     }
@@ -474,8 +463,8 @@ impl IntoResponse for AppError {
         let message = self.public_message();
         let public_breadcrumbs = self.public_breadcrumbs().to_vec();
 
-        // Choke point único de emisión de logs estructurados uniformes.
-        // Si el desarrollador ya ejecutó `log_now()` anticipadamente, no se duplica.
+        // Choke point único de emisión de logs estructurados uniformes; un error ya emitido con
+        // `log_now()` no se vuelve a registrar.
         if !self.is_logged() {
             self.log_now();
         }

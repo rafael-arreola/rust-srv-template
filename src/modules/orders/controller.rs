@@ -1,29 +1,16 @@
-use axum::{
-    Router,
-    extract::State,
-    routing::{get, post},
-};
+use axum::{Router, extract::State, routing::get};
 use std::sync::Arc;
 
-use super::dto::{CreateOrderInput, OrderOutput};
+use super::dto::OrderOutput;
 use super::service::OrderService;
 use crate::core::context::Context;
 use crate::core::error::AppResult;
-use crate::core::extractors::{PathParam, ValidatedBody};
+use crate::core::extractors::PathParam;
 use crate::core::response::ApiResponse;
 
+/// Solo lectura: la creación de órdenes no tiene ruta propia y ocurre a través de `checkout`.
 pub fn routes(service: Arc<OrderService>) -> Router {
-    Router::new().route("/", post(create_order)).route("/{id}", get(get_order)).with_state(service)
-}
-
-#[tracing::instrument(skip_all)]
-async fn create_order(
-    ctx: Context,
-    State(service): State<Arc<OrderService>>,
-    ValidatedBody(input): ValidatedBody<CreateOrderInput>,
-) -> AppResult<ApiResponse<OrderOutput>> {
-    let output = service.create_order(&ctx, input).await?;
-    Ok(ApiResponse::created(output))
+    Router::new().route("/{id}", get(get_order)).with_state(service)
 }
 
 #[tracing::instrument(skip_all)]

@@ -10,23 +10,27 @@ use std::sync::Arc;
 
 use app::{AppContext, Application};
 use config::Env;
-use core::{AppError, AppResult, HttpClient, MongoProvider, RedisProvider};
+use core::{AppError, AppResult, HttpClient, MongoProvider, RedisProvider, Store};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Orden de arranque: configuración → proveedor criptográfico → telemetría →
+    // recursos vivos. Cualquier fallo de la secuencia termina con código distinto de cero.
+    let env = config::get();
+
     // El proveedor criptográfico debe instalarse antes de construir cualquier cliente TLS.
     if let Err(e) = rustls::crypto::ring::default_provider().install_default() {
         eprintln!("Failed to install rustls crypto provider: {e:?}");
         return ExitCode::FAILURE;
     }
 
-    let env = config::get();
-
+    // Sin subscriber no existe ningún canal de log: el fallo va a stderr, igual que los de
+    // configuración y del proveedor criptográfico, porque `log_now()` no tendría a dónde emitir.
     let tracer_guard = match core::tracer::init_tracing().await {
-        Ok(guard) => Some(guard),
+        Ok(guard) => guard,
         Err(e) => {
             eprintln!("Failed to initialize tracing: {e}");
-            None
+            return ExitCode::FAILURE;
         }
     };
 
@@ -34,16 +38,19 @@ async fn main() -> ExitCode {
     // detecte el crash en lugar de interpretarlo como salida limpia.
     let exit_code = match run(env).await {
         Ok(()) => ExitCode::SUCCESS,
+        // No se usa `log_now()`: emite "HTTP request error" con `http.status_code`, y cada
+        // reinicio de un crash-loop contaría como un 5xx falso en las métricas de SLO.
         Err(e) => {
-            let mut fatal = e.attach_context("fatal error during service startup");
-            fatal.log_now();
+            tracing::error!(
+                error.code = %e.code(),
+                error.breadcrumbs = %crate::as_json!(&e.full_trace()),
+                "Service terminated with a fatal error"
+            );
             ExitCode::FAILURE
         }
     };
 
-    if let Some(guard) = tracer_guard {
-        guard.shutdown();
-    }
+    tracer_guard.shutdown();
 
     exit_code
 }
@@ -64,7 +71,7 @@ async fn run(env: &'static Env) -> AppResult<()> {
     };
 
     let http = Arc::new(HttpClient::try_new()?);
-    let ctx = AppContext::new(mongo.database(), redis, http);
+    let ctx = AppContext::new(Store::from_mongo(mongo.database()), redis, http);
 
     Application::serve(ctx).await
 }

@@ -15,11 +15,12 @@ use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::error::AppError;
-use super::extractors::msgpack::{CONTENT_TYPE_MSGPACK, wants_msgpack_response};
-use super::response::NegotiablePayload;
+use super::extractors::msgpack::wants_msgpack_response;
+use super::response::{BodyFormat, RESPONSE_FORMAT};
 
 /// Per-request trace context middleware.
-/// Extracts W3C `traceparent` (or GCP `X-Cloud-Trace-Context`) and attaches it as the parent span.
+/// Extracts W3C `traceparent` (or the GCP load balancer's `X-Cloud-Trace-Context`) and attaches
+/// it as the parent span.
 pub async fn trace_context(req: Request<Body>, next: axum::middleware::Next) -> Response<Body> {
     let span = tracing::info_span!(
         "http.request",
@@ -54,39 +55,25 @@ pub async fn request_timeout(
 }
 
 /// Content negotiation middleware for `Accept: application/vnd.msgpack`.
+///
+/// Decides the body format before the handler runs and exposes it through
+/// [`RESPONSE_FORMAT`], so `ApiResponse` encodes once, straight into the negotiated format,
+/// instead of producing JSON that is then thrown away. Every response carries `Vary: Accept`, so
+/// an intermediary cache never serves the MessagePack encoding to a JSON client or vice versa.
 pub async fn msgpack_negotiation(
     req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response<Body> {
-    let wants_msgpack = wants_msgpack_response(req.headers());
+    let format =
+        if wants_msgpack_response(req.headers()) { BodyFormat::MsgPack } else { BodyFormat::Json };
 
-    let mut response = next.run(req).await;
-
-    let payload = response.extensions_mut().remove::<NegotiablePayload>();
-
-    if !wants_msgpack {
-        return response;
-    }
-
-    let Some(payload) = payload else {
-        return response;
-    };
-
-    match rmp_serde::encode::to_vec_named(&*payload.0) {
-        Ok(msgpack_bytes) => {
-            let headers = response.headers_mut();
-            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE_MSGPACK));
-            headers.remove(header::CONTENT_LENGTH);
-            *response.body_mut() = Body::from(msgpack_bytes);
-            response
-        }
-        Err(e) => {
-            tracing::warn!("Failed to encode MessagePack response: {}", e);
-            response
-        }
-    }
+    let mut response = RESPONSE_FORMAT.scope(format, next.run(req)).await;
+    response.headers_mut().append(header::VARY, HeaderValue::from_static("accept"));
+    response
 }
 
+// Lifetime explícito: el `Extractor` de OpenTelemetry solo lee el
+// `HeaderMap` durante la extracción y clonar todos los headers por petición no aporta nada.
 struct HeaderExtractor<'a>(&'a HeaderMap);
 
 impl Extractor for HeaderExtractor<'_> {
@@ -111,11 +98,16 @@ fn extract_remote_context(headers: &HeaderMap) -> Option<Context> {
     parse_cloud_trace_context(headers)
 }
 
+/// `X-Cloud-Trace-Context: TRACE_ID/SPAN_ID;o=TRACE_TRUE`. La opción `o` es la decisión de
+/// muestreo del balanceador: solo `o=1` marca el contexto como muestreado, de modo que el
+/// servicio hereda esa decisión en lugar de exportar el 100% del tráfico que entra por el LB.
 fn parse_cloud_trace_context(headers: &HeaderMap) -> Option<Context> {
     let value = headers.get("x-cloud-trace-context")?.to_str().ok()?;
 
     let (trace_id_hex, rest) = value.split_once('/')?;
-    let span_id_decimal = rest.split(';').next()?;
+    let mut options = rest.split(';');
+    let span_id_decimal = options.next()?;
+    let sampled = options.any(|option| option.trim() == "o=1");
 
     let trace_id = TraceId::from_hex(trace_id_hex).ok()?;
     let span_id_number: u64 = span_id_decimal.parse().ok()?;
@@ -123,10 +115,12 @@ fn parse_cloud_trace_context(headers: &HeaderMap) -> Option<Context> {
         return None;
     }
 
+    let flags = if sampled { TraceFlags::SAMPLED } else { TraceFlags::default() };
+
     let span_context = SpanContext::new(
         trace_id,
         SpanId::from_bytes(span_id_number.to_be_bytes()),
-        TraceFlags::SAMPLED,
+        flags,
         true,
         TraceState::default(),
     );

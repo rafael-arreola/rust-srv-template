@@ -25,8 +25,12 @@ impl PaginationQuery {
     }
 
     /// Desplazamiento (skip/offset) para motores de base de datos (MongoDB/SQL).
+    ///
+    /// Se multiplica en `u64`: el producto de dos `u32` cabe siempre, mientras que multiplicar en
+    /// `u32` desborda desde `page = 42_949_673` con `limit = 100` (panic en debug, página
+    /// equivocada en release).
     pub fn skip(&self) -> u64 {
-        ((self.page() - 1) * self.limit()) as u64
+        u64::from(self.page().saturating_sub(1)).saturating_mul(u64::from(self.limit()))
     }
 }
 
@@ -47,13 +51,57 @@ pub struct Paginated<T> {
 }
 
 impl<T> Paginated<T> {
-    pub fn new(data: Vec<T>, total: u64, page: u64, limit: u64) -> Self {
-        let total_pages = if limit > 0 && total > 0 { total.div_ceil(limit) } else { 0 };
-        Self { data, total, total_pages, page, limit }
+    /// Construye la respuesta paginada a partir del resultado de consulta y los parámetros de
+    /// paginación. Deriva `total_pages` con `div_ceil` desde `total` y el `limit` ya acotado, así
+    /// `page`, `limit` y `total_pages` salen siempre consistentes entre sí.
+    pub fn from_query(result: QueryResult<T>, query: &PaginationQuery) -> Self {
+        let limit = u64::from(query.limit());
+        let total_pages = if result.total > 0 { result.total.div_ceil(limit) } else { 0 };
+        Self {
+            data: result.items,
+            total: result.total,
+            total_pages,
+            page: u64::from(query.page()),
+            limit,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query(page: Option<u32>, limit: Option<u32>) -> PaginationQuery {
+        PaginationQuery { page, limit }
     }
 
-    /// Construye una respuesta paginada a partir del resultado de consulta y los parámetros de paginación.
-    pub fn from_query(result: QueryResult<T>, query: &PaginationQuery) -> Self {
-        Self::new(result.items, result.total, query.page().into(), query.limit().into())
+    #[test]
+    fn defaults_to_first_page_of_twenty() {
+        let q = query(None, None);
+        assert_eq!((q.page(), q.limit(), q.skip()), (1, 20, 0));
+    }
+
+    #[test]
+    fn clamps_limit_and_page() {
+        assert_eq!(query(Some(0), Some(0)).page(), 1);
+        assert_eq!(query(None, Some(0)).limit(), 1);
+        assert_eq!(query(None, Some(500)).limit(), 100);
+    }
+
+    #[test]
+    fn skip_does_not_overflow_on_huge_pages() {
+        assert_eq!(query(Some(3), Some(10)).skip(), 20);
+        assert_eq!(query(Some(u32::MAX), Some(100)).skip(), u64::from(u32::MAX - 1) * 100);
+    }
+
+    #[test]
+    fn total_pages_rounds_up_and_is_zero_when_empty() {
+        let page =
+            Paginated::from_query(QueryResult::new(vec![1, 2], 21), &query(Some(3), Some(10)));
+        assert_eq!((page.total, page.total_pages, page.page, page.limit), (21, 3, 3, 10));
+
+        let empty =
+            Paginated::<u8>::from_query(QueryResult::new(Vec::new(), 0), &query(None, None));
+        assert_eq!(empty.total_pages, 0);
     }
 }

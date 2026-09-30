@@ -1,22 +1,19 @@
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use super::super::entity::Order;
 use super::items::OrderItemOutput;
-use crate::core::pagination::Paginated;
-
-pub type PaginatedOrders = Paginated<OrderOutput>;
+use crate::shared::Money;
 
 /// Contrato de salida con el detalle consolidado de una orden.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OrderOutput {
     pub id: String,
     pub user_id: String,
-    pub user_name: String,
     pub items: Vec<OrderItemOutput>,
-    pub total_amount: f64,
+    pub total: Money,
     pub status: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: chrono::DateTime<Utc>,
 }
 
 /// El mapper vive en la frontera de transporte: `entity.rs` permanece puro y sin conocimiento
@@ -24,22 +21,21 @@ pub struct OrderOutput {
 impl From<Order> for OrderOutput {
     fn from(order: Order) -> Self {
         Self {
-            id: order.id,
-            user_id: order.user_id,
-            user_name: order.user_name,
+            id: order.id().to_string(),
+            user_id: order.user_id().to_string(),
             items: order
-                .items
-                .into_iter()
+                .items()
+                .iter()
                 .map(|item| OrderItemOutput {
-                    total: item.total(),
-                    name: item.name,
-                    quantity: item.quantity,
-                    unit_price: item.unit_price,
+                    name: item.name().to_string(),
+                    quantity: item.quantity(),
+                    unit_price: item.unit_price(),
+                    total: item.line_total(),
                 })
                 .collect(),
-            total_amount: order.total_amount,
-            status: order.status,
-            created_at: order.created_at,
+            total: order.total(),
+            status: order.status().as_str().to_string(),
+            created_at: order.created_at(),
         }
     }
 }

@@ -1,19 +1,28 @@
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use opentelemetry::trace::TraceContextExt;
 use serde::Serialize;
-use std::sync::Arc;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use super::extractors::msgpack::CONTENT_TYPE_MSGPACK;
 pub use super::pagination::Paginated;
 
-/// Type-erased handle to the original response value, stored in the response
-/// extensions so MessagePack negotiation can encode it once directly.
-#[derive(Clone)]
-pub struct NegotiablePayload(pub Arc<dyn erased_serde::Serialize + Send + Sync>);
+/// Codificación del cuerpo negociada para la petición en curso.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyFormat {
+    Json,
+    MsgPack,
+}
+
+tokio::task_local! {
+    /// Lo fija `middleware::msgpack_negotiation` alrededor del handler, de modo que
+    /// [`ApiResponse`] serializa una sola vez y directamente en el formato pedido. Fuera de ese
+    /// alcance (negociación deshabilitada) la respuesta es JSON.
+    pub static RESPONSE_FORMAT: BodyFormat;
+}
 
 #[derive(Debug, Serialize)]
 pub struct ErrorDetail {
@@ -52,9 +61,13 @@ impl TaskSuccessOutput {
 /// { "trace_id": "...", "data": { ... } }
 /// { "trace_id": "...", "data": { "message": "..." }, "cause": "NOT_FOUND" }
 /// ```
+///
+/// `trace_id` es el identificador W3C del span de la petición. Es `null` únicamente cuando la
+/// respuesta se construye fuera de un span, lo cual es un defecto de cableado que se reporta con
+/// un evento `error` en el log: jamás se fabrica un identificador para rellenar el campo.
 #[derive(Debug, Serialize)]
 pub struct ApiResponse<T> {
-    pub trace_id: String,
+    pub trace_id: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
@@ -68,29 +81,49 @@ pub struct ApiResponse<T> {
 
 impl<T> IntoResponse for ApiResponse<T>
 where
-    T: Serialize + Send + Sync + 'static,
+    T: Serialize,
 {
     fn into_response(self) -> Response {
         let status = self.status;
-        let shared = Arc::new(self);
 
-        let mut response = (status, Json(&*shared)).into_response();
-        response.extensions_mut().insert(NegotiablePayload(shared));
-        response
+        // 204 no lleva cuerpo: se responde el status desnudo en lugar de serializar un envelope
+        // que hyper descartaría igualmente, dejando un `content-type` sin contenido.
+        if status == StatusCode::NO_CONTENT {
+            return status.into_response();
+        }
+
+        let format = RESPONSE_FORMAT.try_with(|format| *format).unwrap_or(BodyFormat::Json);
+
+        if format == BodyFormat::MsgPack {
+            match rmp_serde::encode::to_vec_named(&self) {
+                Ok(bytes) => {
+                    let content_type = HeaderValue::from_static(CONTENT_TYPE_MSGPACK);
+                    return (status, [(header::CONTENT_TYPE, content_type)], bytes).into_response();
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to encode MessagePack response; answering JSON");
+                }
+            }
+        }
+
+        (status, Json(self)).into_response()
     }
 }
 
 impl<T> ApiResponse<T> {
-    fn current_trace_id() -> String {
+    fn current_trace_id() -> Option<String> {
         let context = tracing::Span::current().context();
         let span = context.span();
         let span_context = span.span_context();
 
         if span_context.is_valid() {
-            format!("{:032x}", span_context.trace_id())
-        } else {
-            "00000000000000000000000000000000".to_string()
+            return Some(format!("{:032x}", span_context.trace_id()));
         }
+
+        tracing::error!(
+            "ApiResponse built outside of a request span: trace_id is null (wiring defect)"
+        );
+        None
     }
 
     pub fn ok(data: T) -> Self {
@@ -124,15 +157,6 @@ impl ApiResponse<()> {
 }
 
 impl ApiResponse<ErrorDetail> {
-    pub fn error(code: &'static str, message: String, status: StatusCode) -> Self {
-        Self {
-            trace_id: Self::current_trace_id(),
-            data: Some(ErrorDetail { message, breadcrumbs: Vec::new() }),
-            cause: Some(code),
-            status,
-        }
-    }
-
     pub fn error_with_breadcrumbs(
         code: &'static str,
         message: String,
@@ -144,17 +168,6 @@ impl ApiResponse<ErrorDetail> {
             data: Some(ErrorDetail { message, breadcrumbs }),
             cause: Some(code),
             status,
-        }
-    }
-}
-
-impl<T: Serialize> ApiResponse<Paginated<T>> {
-    pub fn paginated(data: Vec<T>, total: u64, page: u64, limit: u64) -> Self {
-        Self {
-            trace_id: Self::current_trace_id(),
-            data: Some(Paginated::new(data, total, page, limit)),
-            cause: None,
-            status: StatusCode::OK,
         }
     }
 }

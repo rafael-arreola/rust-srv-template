@@ -1,7 +1,6 @@
-use axum::http::StatusCode;
 use mongodb::error::{Error as MongoError, ErrorKind as MongoErrorKind, WriteFailure};
 
-use crate::core::error::{AppError, ErrorKind, ErrorSeverity};
+use crate::core::error::{AppError, ErrorKind};
 
 /// Código de servidor MongoDB para violación de índice único.
 const DUPLICATE_KEY_CODE: i32 = 11000;
@@ -9,26 +8,29 @@ const DUPLICATE_KEY_CODE: i32 = 11000;
 /// Conversión canónica de errores del driver MongoDB hacia `AppError`.
 ///
 /// Habilita la propagación directa con `?` desde los repositorios sin repetir `map_err`.
-/// Una violación de índice único se traduce a 409 `ALREADY_EXISTS` con mensaje público genérico;
-/// cualquier otro fallo del driver se clasifica como error de base de datos (500). El detalle
-/// técnico del driver (nombres de índice, valores duplicados, hosts) queda confinado al log interno.
+/// Una violación de índice único se traduce al `ErrorKind::AlreadyExists` canónico (409) con un
+/// mensaje público genérico: en esta capa no se conoce la entidad ni el campo, y el detalle del
+/// driver (nombre del índice, valor duplicado, hosts) queda confinado al log interno. Cualquier
+/// otro fallo del driver se clasifica como error de base de datos (500).
 impl From<MongoError> for AppError {
     fn from(err: MongoError) -> Self {
         if is_duplicate_key(&err) {
-            return AppError::from(ErrorKind::Custom {
-                code: "ALREADY_EXISTS",
-                status: StatusCode::CONFLICT,
-                message: "The resource already exists.".to_string(),
-                severity: ErrorSeverity::Info,
+            return AppError::from(ErrorKind::AlreadyExists {
+                entity: "Resource",
+                details: "a unique field is already in use".to_string(),
             })
-            .with_internal(err.to_string());
+            // `err.to_string()` incluye la clave duplicada (`dup key: { email: "..." }`), que puede
+            // ser un dato personal: al log solo llega que fue una violación de índice único.
+            .with_internal("unique index violation (E11000)");
         }
 
         AppError::database(err.to_string())
     }
 }
 
-fn is_duplicate_key(err: &MongoError) -> bool {
+/// Violación de un índice único. Pública para el repositorio que necesita distinguir "ya
+/// existe" de otro fallo y reaccionar (por ejemplo, releer el registro de una clave idempotente).
+pub fn is_duplicate_key(err: &MongoError) -> bool {
     match &*err.kind {
         MongoErrorKind::Write(WriteFailure::WriteError(write_error)) => {
             write_error.code == DUPLICATE_KEY_CODE

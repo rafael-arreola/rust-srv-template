@@ -1,9 +1,8 @@
 //! Proveedor de autenticación basado en JWT validado contra un JWKS remoto.
 //!
-//! Antes de construir [`JwtJwksAuthProvider`], el consumidor debe instalar el proveedor
-//! criptográfico de `jsonwebtoken` una única vez durante el arranque, según la feature de
-//! criptografía habilitada. Este módulo no lo instala por sí mismo para no imponer una elección
-//! global de criptografía.
+//! `jsonwebtoken` elige su proveedor criptográfico por feature: con solo `rust_crypto` activa (la
+//! que habilita `axum-jwt-auth`) lo resuelve solo. Solo hace falta instalarlo a mano al arranque si
+//! se activan a la vez `aws_lc_rs` y `rust_crypto`, o ninguna de las dos.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -72,6 +71,21 @@ impl JwtJwksClaims {
     }
 }
 
+/// Parámetros del proveedor JWT/JWKS. Se agrupan en un struct propio porque `issuer` y
+/// `audiences` son obligatorios: un token válido para otra API del mismo emisor comparte el JWKS
+/// y solo `aud`/`iss` lo distinguen.
+#[derive(Debug, Clone)]
+pub struct JwtJwksConfig {
+    /// Endpoint JWKS del emisor (`https://.../.well-known/jwks.json`).
+    pub jwks_url: String,
+    /// Valor exacto que debe traer el claim `iss`.
+    pub issuer: String,
+    /// Valores admitidos para el claim `aud`; el token debe contener al menos uno.
+    pub audiences: Vec<String>,
+    /// Allowlist opcional de `client_id`/`azp`/`sub`; vacía significa cualquier cliente del emisor.
+    pub allowed_client_ids: Vec<String>,
+}
+
 /// Proveedor JWT/JWKS con firma `RS256` validada contra el endpoint JWKS configurado.
 #[derive(Clone)]
 pub struct JwtJwksAuthProvider {
@@ -82,19 +96,28 @@ pub struct JwtJwksAuthProvider {
 impl JwtJwksAuthProvider {
     /// Construye e inicializa el decodificador remoto de JWKS.
     ///
-    /// Valida `exp` con algoritmo `RS256` y no valida `aud`; la allowlist de clientes se aplica
-    /// después de decodificar el token. Un fallo de construcción o inicialización es fatal.
-    pub async fn new(
-        jwks_url: impl Into<String>,
-        allowed_client_ids: Vec<String>,
-    ) -> AppResult<Self> {
-        let url = jwks_url.into();
+    /// Valida firma `RS256`, `exp`, `nbf`, `iss` y `aud`. `initialize()` descarga las llaves y deja
+    /// corriendo la tarea de refresco periódico del propio decodificador, así que una rotación de
+    /// llaves en el emisor se absorbe sin reiniciar el proceso. Un fallo de construcción o de la
+    /// descarga inicial es fatal.
+    pub async fn new(config: JwtJwksConfig) -> AppResult<Self> {
+        if config.issuer.trim().is_empty() {
+            return Err(AppError::internal("JWT provider requires a non-empty issuer"));
+        }
+        if config.audiences.iter().all(|audience| audience.trim().is_empty()) {
+            return Err(AppError::internal("JWT provider requires at least one audience"));
+        }
 
+        // `set_issuer`/`set_audience` solo comparan la claim si viene en el token: sin
+        // `required_spec_claims` un token de otra API del mismo IdP que omita `iss` o `aud` pasa.
         let mut validation = Validation::new(Algorithm::RS256);
+        validation.set_required_spec_claims(&["exp", "iss", "aud"]);
         validation.validate_exp = true;
-        validation.required_spec_claims.insert("exp".to_string());
-        validation.validate_aud = false;
+        validation.validate_nbf = true;
+        validation.set_issuer(&[config.issuer.as_str()]);
+        validation.set_audience(&config.audiences);
 
+        let url = config.jwks_url;
         let decoder = RemoteJwksDecoder::builder()
             .jwks_url(url.clone())
             .validation(validation)
@@ -103,11 +126,13 @@ impl JwtJwksAuthProvider {
                 AppError::internal(format!("Failed to build JWKS decoder for URL {url}: {e}"))
             })?;
 
+        // El token de cancelación que devuelve `initialize()` detendría el refresco periódico;
+        // se descarta a propósito porque la tarea debe vivir tanto como el proceso.
         decoder.initialize().await.map_err(|e| {
             AppError::internal(format!("Failed to initialize JWKS decoder from {url}: {e}"))
         })?;
 
-        Ok(Self { decoder: Arc::new(decoder), allowed_client_ids })
+        Ok(Self { decoder: Arc::new(decoder), allowed_client_ids: config.allowed_client_ids })
     }
 }
 
@@ -117,36 +142,38 @@ impl AuthProvider for JwtJwksAuthProvider {
         "jwt-jwks"
     }
 
+    /// Recibe el token ya extraído del esquema `Bearer` por [`auth_middleware`].
+    ///
+    /// El motivo concreto del rechazo (firma, expiración, `kid` desconocido, `aud`) se queda en el
+    /// detalle interno: al cliente solo le corresponde saber que la credencial no es válida.
+    ///
+    /// [`auth_middleware`]: crate::core::auth::provider::auth_middleware
     #[tracing::instrument(skip_all, fields(provider = "jwt-jwks"))]
     async fn authenticate(&self, token: &str) -> AppResult<AuthPrincipal> {
-        let clean_token = token
-            .strip_prefix("Bearer ")
-            .or_else(|| token.strip_prefix("bearer "))
-            .unwrap_or(token)
-            .trim();
-
-        let token_data = JwtDecoder::<JwtJwksClaims>::decode(self.decoder.as_ref(), clean_token)
+        let token_data = JwtDecoder::<JwtJwksClaims>::decode(self.decoder.as_ref(), token)
             .await
-            .map_err(|e| AppError::unauthorized(format!("JWT validation failed: {e}")))?;
+            .map_err(|e| {
+                AppError::unauthorized("The provided token is invalid or has expired.")
+                    .with_internal(format!("JWT validation failed: {e}"))
+            })?;
 
-        let client_id = token_data.claims.get_client_id();
+        let client_id = token_data.claims.get_client_id().ok_or_else(|| {
+            AppError::unauthorized("The provided token is invalid or has expired.")
+                .with_internal("JWT carries no client_id, azp or sub claim")
+        })?;
 
-        if !self.allowed_client_ids.is_empty() {
-            let is_allowed = client_id
-                .as_deref()
-                .is_some_and(|id| self.allowed_client_ids.iter().any(|allowed| allowed == id));
-            if !is_allowed {
-                return Err(AppError::forbidden("Forbidden: unauthorized client id"));
-            }
+        if !self.allowed_client_ids.is_empty() && !self.allowed_client_ids.contains(&client_id) {
+            return Err(AppError::forbidden("")
+                .with_internal(format!("client id '{client_id}' is not in the allowlist")));
         }
 
         Ok(AuthPrincipal {
             provider: "jwt-jwks",
-            client_id: client_id.unwrap_or_else(|| "unknown_client".to_string()),
+            client_id,
             user_id: token_data.claims.sub.clone(),
             email: token_data.claims.email.clone(),
             permissions: token_data.claims.all_permissions(),
-            token: clean_token.to_string(),
+            token: token.to_string(),
         })
     }
 }

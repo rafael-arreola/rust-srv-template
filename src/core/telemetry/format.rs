@@ -71,7 +71,12 @@ where
                     span_context.trace_id()
                 )),
             );
-            entry.insert("logging.googleapis.com/trace_sampled".to_string(), true.into());
+            // Cloud Logging solo enlaza el log a la traza si esta se exportó: con muestreo parcial,
+            // marcar `true` una traza descartada deja enlaces a trazas inexistentes.
+            entry.insert(
+                "logging.googleapis.com/trace_sampled".to_string(),
+                span_context.is_sampled().into(),
+            );
             entry.insert(
                 "logging.googleapis.com/spanId".to_string(),
                 Value::String(span_context.span_id().to_string()),
@@ -92,6 +97,8 @@ fn severity(level: &Level) -> &'static str {
     }
 }
 
+// Lifetime explícito: el visitor escribe en el mapa del evento en curso
+// dentro de `format_event`; un mapa propio obligaría a fusionar dos mapas por cada evento.
 struct JsonVisitor<'a>(&'a mut Map<String, Value>);
 
 impl tracing::field::Visit for JsonVisitor<'_> {

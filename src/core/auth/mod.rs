@@ -11,7 +11,7 @@ pub mod principal;
 pub mod provider;
 
 pub use actor::Actor;
-pub use jwt_jwks::{JwtJwksAuthProvider, JwtJwksClaims};
+pub use jwt_jwks::{JwtJwksAuthProvider, JwtJwksClaims, JwtJwksConfig};
 pub use permissions::{require_any_permission, require_permission};
 pub use principal::AuthPrincipal;
 pub use provider::{

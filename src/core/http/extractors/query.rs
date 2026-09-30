@@ -7,8 +7,9 @@ use crate::core::http::error::{AppError, ErrorKind};
 
 /// Query-string extractor que deserializa y ejecuta `validator::Validate`.
 ///
-/// Sustituye a `Query<T>` en los handlers: el rechazo de Axum es texto plano sin `trace_id`, y
-/// además las reglas `#[validate(...)]` declaradas en los DTO de query nunca llegaban a ejecutarse.
+/// Sustituye a `Query<T>` en los handlers: el rechazo de Axum es texto plano sin `trace_id` y
+/// `Query<T>` no ejecuta las reglas `#[validate(...)]` del DTO; este extractor sí, y responde
+/// ambos fallos dentro del envelope.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ValidatedQuery<T>(pub T);
 

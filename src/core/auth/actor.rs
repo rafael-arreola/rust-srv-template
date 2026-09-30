@@ -2,8 +2,8 @@ use super::principal::AuthPrincipal;
 
 /// Quién ejecuta la operación, en la forma que puede viajar hasta un servicio.
 ///
-/// Es la proyección del [`AuthPrincipal`] **sin** el token ni el conjunto de permisos: el token no
-/// debe salir de la capa HTTP y la autorización se decide en el controller, nunca en un servicio.
+/// Es la proyección del [`AuthPrincipal`] **sin** el token ni el conjunto de permisos: un servicio
+/// que recibe el `Actor` no puede reenviar la credencial ni decidir autorización por su cuenta.
 /// Esto es lo que el middleware de autenticación deja en el [`Context`](crate::core::context::Context).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Actor {

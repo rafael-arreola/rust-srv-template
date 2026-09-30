@@ -5,11 +5,12 @@ use axum::{
 };
 use std::sync::Arc;
 
-use super::dto::{CreateUserInput, PaginatedUsers, PaginationQuery, UpdateUserInput, UserOutput};
+use super::dto::{CreateUserInput, PaginatedUsers, UpdateUserInput, UserOutput};
 use super::service::UserService;
 use crate::core::context::Context;
 use crate::core::error::AppResult;
 use crate::core::extractors::{PathParam, ValidatedBody, ValidatedQuery};
+use crate::core::pagination::PaginationQuery;
 use crate::core::response::ApiResponse;
 
 pub fn routes(service: Arc<UserService>) -> Router {

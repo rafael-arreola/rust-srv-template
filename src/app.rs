@@ -1,26 +1,29 @@
 use std::sync::Arc;
 
 use axum::Router;
-use mongodb::Database;
 
 use crate::config;
-use crate::core::db::RedisProvider;
+use crate::core::db::{RedisProvider, Store};
 use crate::core::error::AppResult;
 use crate::core::http::fallback;
 use crate::core::net::HttpClient;
 use crate::core::server::ServerLauncher;
-use crate::modules::{build_api_router, health};
+use crate::modules::{Modules, health};
 
-/// Recursos vivos del proceso. La configuración se lee con `config::get()`; nunca se inyecta `&Env`.
+/// Recursos vivos del proceso. La configuración vive en un `OnceLock` estático (`config::get()`),
+/// por eso no viaja dentro del contexto.
+///
+/// `db` es el handle neutral de persistencia: ningún módulo recibe el driver, solo su
+/// `repository.rs` baja a él a través de `Store`.
 #[derive(Clone)]
 pub struct AppContext {
-    pub db: Database,
+    pub db: Store,
     pub redis: Option<RedisProvider>,
     pub http: Arc<HttpClient>,
 }
 
 impl AppContext {
-    pub fn new(db: Database, redis: Option<RedisProvider>, http: Arc<HttpClient>) -> Self {
+    pub fn new(db: Store, redis: Option<RedisProvider>, http: Arc<HttpClient>) -> Self {
         Self { db, redis, http }
     }
 }
@@ -43,13 +46,12 @@ impl Application {
     }
 
     pub async fn create_router(ctx: &AppContext) -> AppResult<Router> {
-        let health_router = health::router(ctx.db.clone());
-        let api_router = build_api_router(ctx).await?;
+        let api_router = Modules::init(ctx).await?.api_v1_router();
 
         // Los fallbacks se aplican al final: `method_not_allowed_fallback` solo alcanza los
         // `MethodRouter` ya registrados, y `nest` los aplana en el router padre al montarlos.
         let app = Router::new()
-            .merge(health_router)
+            .merge(health::router())
             .nest("/api/v1", api_router)
             .fallback(fallback::not_found)
             .method_not_allowed_fallback(fallback::method_not_allowed);

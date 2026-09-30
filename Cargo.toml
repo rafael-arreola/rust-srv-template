@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
 async-trait = "0.1"
 axum = "0.8"
 axum-jwt-auth = "0.7"
@@ -14,7 +13,6 @@ chrono = { version = "0.4", default-features = false, features = [
     "clock",
 ] }
 dotenvy = "0.15"
-erased-serde = "0.4"
 futures = "0.3"
 jsonwebtoken = "10"
 mongodb = { version = "3.9", default-features = false, features = [
@@ -72,9 +70,23 @@ validator = { version = "0.21", features = ["derive"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
+[lints.rust]
+unsafe_code = "forbid"
+
+# La compuerta detiene todo camino de pánico y toda aritmética o conversión implícita, no solo
+# `unwrap`: `v[0]`, `a - b` y `x as u64` son los tres defectos que ningún grep encuentra y que
+# `cargo clippy -D warnings` sí. Cada operación numérica debe elegir `checked_*`, `saturating_*`
+# o `From`/`TryFrom` de forma explícita.
 [lints.clippy]
+arithmetic_side_effects = "deny"
+as_conversions = "deny"
 dbg_macro = "deny"
 expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
 unwrap_used = "deny"
 
 [profile.release]
