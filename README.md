@@ -104,7 +104,7 @@ rust-srv-template/
 ## Autenticación (desconectada por defecto)
 
 `core::auth` (JWT/JWKS + RBAC) viene incluida en la plantilla, pero se entrega **desconectada**: ningún módulo de `src/modules/` ni el router la utilizan todavía.
-Para activarla, conéctala en el composition root (`src/app.rs`) siguiendo `AGENTS.md` Guardrail 17 y el catálogo de capacidades de `PROJECT.md` §2.3, sin acoplar los módulos de negocio a la capa técnica.
+Para activarla, conéctala en el composition root (`src/app.rs`) siguiendo `AGENTS.md` Regla 17 y el catálogo de capacidades de `PROJECT.md` §2.3, sin acoplar los módulos de negocio a la capa técnica.
 
 ---
 
