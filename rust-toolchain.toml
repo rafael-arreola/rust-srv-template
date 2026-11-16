@@ -1,0 +1,8 @@
+# Pin explícito del toolchain: el build debe ser reproducible entre tu máquina,
+# el contenedor de build/Dockerfile y Cloud Build. Sin este archivo, `rust:bookworm`
+# resuelve a la última stable publicada y una release nueva puede romper el deploy
+# sin que ningún commit haya cambiado.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

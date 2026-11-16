@@ -1,0 +1,49 @@
+[package]
+name = "engine"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["mongo", "redis"]
+mongo = ["dep:bson", "dep:mongodb"]
+redis = ["dep:redis"]
+uuid = ["dep:uuid"]
+multipart = ["axum/multipart", "dep:axum_typed_multipart"]
+testing = []
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+axum_typed_multipart = { workspace = true, optional = true }
+bson = { workspace = true, optional = true }
+chrono.workspace = true
+dotenvy.workspace = true
+futures.workspace = true
+jsonwebtoken.workspace = true
+mongodb = { workspace = true, optional = true }
+opentelemetry.workspace = true
+opentelemetry-gcloud-trace.workspace = true
+opentelemetry-semantic-conventions.workspace = true
+opentelemetry_sdk.workspace = true
+redis = { workspace = true, optional = true }
+reqwest.workspace = true
+reqwest-middleware.workspace = true
+reqwest-tracing.workspace = true
+rmp-serde.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber.workspace = true
+uuid = { workspace = true, optional = true }
+validator.workspace = true
+
+[dev-dependencies]
+tower.workspace = true
+
+[lints]
+workspace = true

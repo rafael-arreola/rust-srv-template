@@ -1,0 +1,19 @@
+[package]
+name = "service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# `mongo` y `redis` vienen activos por defecto; puedes desactivar cualquiera con `default-features = false`
+engine = { path = "../engine", features = ["mongo", "redis"] }
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+validator.workspace = true
+
+[dev-dependencies]
+engine = { path = "../engine", features = ["testing"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

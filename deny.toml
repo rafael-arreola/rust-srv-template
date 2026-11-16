@@ -1,0 +1,41 @@
+# Configuración de cargo-deny (escaneo de supply-chain).
+#
+# Ejecutado en la etapa builder de build/Dockerfile:
+#   cargo deny check advisories bans sources
+#
+# `licenses` NO se ejecuta todavía: la allowlist de abajo es un punto de partida que
+# debe validarse contra el árbol real (`cargo deny check licenses`) antes de añadirla
+# a la compuerta, o un build en verde puede volverse rojo por una licencia legítima.
+
+[advisories]
+# Un advisory nuevo de RUSTSEC pone el build en rojo sin que cambie el código.
+# Ese es el comportamiento buscado: enumera aquí los IDs aceptados conscientemente,
+# con fecha y motivo, en lugar de desactivar el check.
+ignore = []
+yanked = "deny"
+
+[bans]
+# Dependencias con versión comodín: imposibilitan un build reproducible.
+wildcards = "deny"
+# Versiones duplicadas de un mismo crate: señal de deriva, no error fatal.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
