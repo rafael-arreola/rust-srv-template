@@ -2,7 +2,7 @@
 
 Mantendré el proyecto dividido en dos crates dentro del Virtual Workspace: `engine/` concentra el motor técnico reutilizable y permanecerá intacto durante el desarrollo de funcionalidades salvo solicitud explícita para extender el framework, mientras que `service/` aloja todo el código del microservicio. Trataré los dominios `users`, `orders`, `checkout` y `carrier` presentes en `service/` como implementaciones de referencia del molde arquitectónico que pueden sustituirse al iniciar un servicio nuevo respetando las mismas fronteras.
 
-En `service/src/` modelaré cada dominio como un archivo plano por defecto, permitiendo estructuras auxiliares adicionales dentro de `stores/` y `services/`, subcarpetas organizativas (`services/shared/`, `services/compound/`) y la expansión a `<dominio>/mod.rs` con submódulos cohesivos cuando un dominio agrupe múltiples sub-flujos extensos:
+En `service/src/` modelaré cada dominio como un archivo plano por defecto y lo expandiré a una carpeta `<dominio>/mod.rs` con submódulos cohesivos únicamente cuando agrupe varios sub-flujos o subestructuras con identidad propia (nunca por número de líneas). Esta variante aplica por igual a `models/`, `services/` y `http/`, y convive con las subcarpetas organizativas `services/shared/` y `services/compound/`:
 
 ```text
 service/src/
@@ -13,7 +13,8 @@ service/src/
 ├── models/
 │   ├── mod.rs                 # Reexporta modelos e identidades públicas
 │   ├── shared.rs              # Objetos de valor transversales (Money, Currency, Country, Kilograms)
-│   └── <singular>.rs          # Struct del modelo + alias *Id + constructores e invariantes
+│   ├── <singular>.rs          # Por defecto: struct del modelo + alias *Id + constructores e invariantes
+│   └── <singular>/            # Agregado con varias subestructuras: mod.rs (modelo raíz + *Id) + <submódulo>.rs
 ├── stores/                    # Condicional: solo para dominios con persistencia propia
 │   ├── mod.rs                 # Reexporta *Store / *Repository y tipos auxiliares
 │   ├── helpers.rs             # Helpers de persistencia propios del servicio (paginate, primary_collection)
@@ -22,12 +23,15 @@ service/src/
 │   ├── mod.rs
 │   └── <proveedor>.rs         # Struct *Client sobre Arc<HttpClient> + contratos remotos privados
 ├── services/
-│   ├── mod.rs                 # Reexporta *Service y comandos auxiliares
-│   ├── <dominio>.rs           # Struct *Service (recibe dependencias por DI) + comandos auxiliares
+│   ├── mod.rs                 # Reexporta *Service
+│   ├── <dominio>.rs           # Por defecto: struct *Service (recibe dependencias por DI)
+│   ├── <dominio>/             # Varios sub-flujos: mod.rs (*Service + new) + <subflujo>.rs con su bloque impl
 │   └── compound/ | shared/    # Opcional: servicios agregadores o utilidades de negocio compartidas
 └── http/
     ├── mod.rs
-    └── <dominio>.rs           # *Request, *Resource opcional, engine::respond! y routes() con State<*Service>
+    ├── <dominio>.rs           # Por defecto: *Request, *Resource opcional, engine::respond!, routes() y handlers
+    └── <dominio>/             # Varios sub-flujos o DTOs extensos: mod.rs (routes) + handlers.rs + dtos.rs
+        └── dtos/              # Cuando dtos.rs deja de ser cohesivo: mod.rs + <grupo>.rs (p. ej. input, query)
 ```
 
 Respetaré en todo momento la dirección estricta de dependencias e inyección entre crates y capas:
@@ -49,15 +53,15 @@ flowchart TD
     MODELS --> ENGINE["engine/"]
 ```
 
-| Zona o ruta                                   | Responsabilidad y dependencias permitidas                                                                                                                                                                                                                                                                              | Dependencias y prácticas prohibidas                                                                                                                                                                                                   |
-| :-------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `engine/src/{runtime,types,stores,web}/`      | Proveeré `engine::boot`, `Envs`, `Registry<T>`, `Telemetry`, tipos puros (`Cast`, `UtcDateTime`, `Context`, `Actor`, `DelegatedCredential`, `AppError`), singletons (`Mongo`, `Redis`, `Http`, `Auth`) y el kit HTTP (`ServerLauncher`, extractores, `Status<T>`, `respond!`, `provide!`).                             | No acoplaré variables, rutas ni reglas de un microservicio concreto dentro del motor, ni expondré `Collection`, `BsonExt` o `doc!` fuera de `engine::db`.                                                                             |
-| `service/src/{envs,main,bootstrap,routes}.rs` | Declararé todas las variables en `envs.rs`, inicializaré singletons en `main.rs`, ensamblaré `*Store`/`*Repository`, `*Client` y `*Service` en `bootstrap.rs`, y montaré el árbol de URLs y reinos en `routes.rs` (dejando `/healthz` y fallbacks `404`/`405` a `ServerLauncher`).                                     | No leeré `env::var` fuera de `engine/src/runtime/env.rs` [audit 23] ni publicaré stores o clientes crudos en `AppContext`.                                                                                                            |
-| `service/src/models/`                         | Definiré entidades en singular (`UpperCamelCase`), alias `*Id` (`Cast<T, Db>`), objetos de valor e invariantes en memoria usando únicamente `serde` y tipos puros de `engine`.                                                                                                                                         | No importaré `stores/`, `clients/`, `services/`, `http/`, `bootstrap`, `routes`, `engine::db`, `engine::stores` ni `engine::web` [audit 5].                                                                                           |
-| `service/src/stores/`                         | Encapsularé cada almacén (`<Singular>Store` o `<Singular>Repository`) sobre `crate::models::*`, `Mongo` y `engine::db` (`Collection<Document>`, `BsonExt`, `encode_entity`, `decode_entity`, `doc!`).                                                                                                                  | No importaré `services/`, `http/`, `clients/`, `engine::web` ni hermanos en `stores/`, ni expondré `Document`, `Bson`, `Collection`, `Database` o `MongoDb` en declaraciones `pub` [audit 6, 24].                                     |
-| `service/src/clients/`                        | Implementaré adaptadores hacia APIs externas consumiendo `Arc<HttpClient>` (`Http::get(...)`) y modelos de `crate::models::*`, manteniendo privados los payloads remotos.                                                                                                                                              | No importaré `stores/`, `services/`, `http/`, `engine::db`, `engine::stores`, `engine::web`, otros clientes hermanos ni construiré `reqwest::Client` crudo [audit 2, 7].                                                              |
-| `service/src/services/**`                     | Concentraré las reglas de negocio y orquestación en structs `<Nombre>Service` `#[derive(Clone)]` consumiendo `models/`, `stores/`, `clients/` y otros `services/` recibidos por DI en un DAG sin ciclos (donde `services/<dominio>/**` es un nodo y `shared/<unidad>` o `compound/<unidad>` son nodos independientes). | No importaré `http/`, `bootstrap`, `routes`, `engine::web`, `engine::db` ni `bson`/`mongodb`, no usaré `*Dto`, no introduciré ciclos y no invocaré `*(Store\|Repository\|Client\|Service)::new(` fuera de tests [audit 8, 9, 10, 12]. |
-| `service/src/http/`                           | Declararé contratos `*Request`, proyecciones `*Resource` opcionales, `engine::respond!` y `pub fn routes() -> Router<AppContext>` consumiendo `services/`, `models/`, `AppContext` y `engine::web`.                                                                                                                    | No importaré `stores/`, `clients/`, `engine::db` ni `engine::stores`, no usaré extractores crudos `Query<T>`/`Path<T>` ni sintaxis `:id` (usaré `{id}` con `PathParam`), y no instanciaré servicios sin DI [audit 3, 11, 12, 13].     |
+| Zona o ruta                                   | Responsabilidad y dependencias permitidas                                                                                                                                                                                                                                                                              | Dependencias y prácticas prohibidas                                                                                                                                                                                                                                                               |
+| :-------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `engine/src/{runtime,types,stores,web}/`      | Proveeré `engine::boot`, `Envs`, `Registry<T>`, `Telemetry`, tipos puros (`Cast`, `UtcDateTime`, `Context`, `Actor`, `DelegatedCredential`, `AppError`), singletons (`Mongo`, `Redis`, `Http`, `Auth`) y el kit HTTP (`ServerLauncher`, extractores, `Status<T>`, `respond!`, `provide!`).                             | No acoplaré variables, rutas ni reglas de un microservicio concreto dentro del motor, ni expondré `Collection`, `BsonExt` o `doc!` fuera de `engine::db`.                                                                                                                                         |
+| `service/src/{envs,main,bootstrap,routes}.rs` | Declararé todas las variables en `envs.rs`, inicializaré singletons en `main.rs`, ensamblaré `*Store`/`*Repository`, `*Client` y `*Service` en `bootstrap.rs`, y montaré el árbol de URLs y reinos en `routes.rs` (dejando `/healthz` y fallbacks `404`/`405` a `ServerLauncher`).                                     | No leeré `env::var` fuera de `engine/src/runtime/env.rs` [audit 23] ni publicaré stores o clientes crudos en `AppContext`.                                                                                                                                                                        |
+| `service/src/models/`                         | Definiré entidades en singular (`UpperCamelCase`), alias `*Id` (`Cast<T, Db>`), objetos de valor e invariantes en memoria usando únicamente `serde` y tipos puros de `engine`.                                                                                                                                         | No importaré `stores/`, `clients/`, `services/`, `http/`, `bootstrap`, `routes`, `engine::db`, `engine::stores` ni `engine::web` [audit 5], ni `validator` o structs espejo de un `*Request` (ver sección 3).                                                                                     |
+| `service/src/stores/`                         | Encapsularé cada almacén (`<Singular>Store` o `<Singular>Repository`) sobre `crate::models::*`, `Mongo` y `engine::db` (`Collection<Document>`, `BsonExt`, `encode_entity`, `decode_entity`, `doc!`).                                                                                                                  | No importaré `services/`, `http/`, `clients/`, `engine::web` ni hermanos en `stores/`, ni expondré `Document`, `Bson`, `Collection`, `Database` o `MongoDb` en declaraciones `pub` [audit 6, 24].                                                                                                 |
+| `service/src/clients/`                        | Implementaré adaptadores hacia APIs externas consumiendo `Arc<HttpClient>` (`Http::get(...)`) y modelos de `crate::models::*`, manteniendo privados los payloads remotos.                                                                                                                                              | No importaré `stores/`, `services/`, `http/`, `engine::db`, `engine::stores`, `engine::web`, otros clientes hermanos ni construiré `reqwest::Client` crudo [audit 2, 7].                                                                                                                          |
+| `service/src/services/**`                     | Concentraré las reglas de negocio y orquestación en structs `<Nombre>Service` `#[derive(Clone)]` consumiendo `models/`, `stores/`, `clients/` y otros `services/` recibidos por DI en un DAG sin ciclos (donde `services/<dominio>/**` es un nodo y `shared/<unidad>` o `compound/<unidad>` son nodos independientes). | No importaré `http/`, `bootstrap`, `routes`, `engine::web`, `engine::db` ni `bson`/`mongodb`, no usaré `*Dto` ni declararé structs de entrada que repliquen un `*Request`, no introduciré ciclos y no invocaré `*(Store\|Repository\|Client\|Service)::new(` fuera de tests [audit 8, 9, 10, 12]. |
+| `service/src/http/`                           | Declararé contratos `*Request`, proyecciones `*Resource` opcionales, `engine::respond!` y `pub fn routes() -> Router<AppContext>` consumiendo `services/`, `models/`, `AppContext` y `engine::web`, y convertiré cada DTO a primitivas o modelos dentro del handler antes de invocar al servicio.                      | No importaré `stores/`, `clients/`, `engine::db` ni `engine::stores`, no usaré extractores crudos `Query<T>`/`Path<T>` ni sintaxis `:id` (usaré `{id}` con `PathParam`), y no instanciaré servicios sin DI [audit 3, 11, 12, 13].                                                                 |
 
 ## 2. Convenciones, Ensamblaje e Integración
 
@@ -72,7 +76,7 @@ Alinearé los nombres de métodos entre capas evitando repetir el sustantivo del
 | Actualización      | `update_versioned(&user)` -> `Outcome` | `update(&ctx, ...)`              | `update_<singular>`                  | `PUT /{id}` (`200`)    |
 | Borrado lógico     | `soft_delete(id, now)` -> `bool`       | `delete(&ctx, id)`               | `delete_<singular>`                  | `DELETE /{id}` (`204`) |
 
-- Mantendré un orden de lectura descendente uniforme en cada archivo: en `models/`, alias `*Id` y enums auxiliares seguidos del struct principal y sus constructores/mutadores; en `stores/`, structs/enums auxiliares tipados, el struct `*Store` / `*Repository`, `new()`, `init_indexes(&self)`, lecturas y escrituras; en `services/`, structs auxiliares, el struct `*Service`, `new(...)`, métodos públicos y helpers privados; y en `http/`, contratos `*Request`, `*Resource` + `engine::respond!`, `pub fn routes()` y handlers privados.
+- Mantendré un orden de lectura descendente uniforme en cada archivo: en `models/`, alias `*Id` y enums auxiliares seguidos del struct principal y sus constructores/mutadores; en `stores/`, structs/enums auxiliares tipados, el struct `*Store` / `*Repository`, `new()`, `init_indexes(&self)`, lecturas y escrituras; en `services/`, el struct `*Service`, `new(...)`, métodos públicos y helpers privados; y en `http/`, contratos `*Request`, `*Resource` + `engine::respond!`, `pub fn routes()` y handlers privados (repartidos en `dtos.rs`, `mod.rs` y `handlers.rs`, en ese orden de lectura, cuando el dominio sea carpeta).
 - Configuraré las features de `engine` en `service/Cargo.toml` según las necesidades reales del microservicio: `mongo` y `redis` vienen activas por defecto (`default-features = false` permite operar sobre SQL puro), `uuid` habilita `Cast<String, Uuid>` / `Cast<Uuid>` con `new_v7()`, y `multipart` habilita `ValidatedMultipart<T>` sobre `axum_typed_multipart` (añadiendo `axum` con `multipart` y `axum_typed_multipart` en `service/Cargo.toml` cuando se utilice `#[derive(TryFromMultipart)]`).
 
 En `service/src/stores/` resolveré `Mongo::get(Mongo::DEFAULT)?` dentro de `new()` sin inyección de dependencias y mantendré privada la `Collection<Document>` del driver:
@@ -99,10 +103,16 @@ impl CheckoutService {
         Self { users, orders, carrier }
     }
 
-    #[tracing::instrument(skip_all, fields(user_id = %cmd.user_id))]
-    pub async fn execute(&self, ctx: &Context, cmd: PlaceCheckout) -> AppResult<Order> {
-        let user = self.users.find_active(ctx, &cmd.user_id).await.trace("verificando usuario")?;
-        self.orders.place(ctx, user.id, cmd.idempotency_key, cmd.items).await.trace("creando orden")
+    #[tracing::instrument(skip_all, fields(%user_id))]
+    pub async fn execute(
+        &self,
+        ctx: &Context,
+        user_id: UserId,
+        idempotency_key: String,
+        items: Vec<OrderItem>,
+    ) -> AppResult<Order> {
+        let user = self.users.find_active(ctx, &user_id).await.trace("verificando usuario")?;
+        self.orders.place(ctx, user.id, idempotency_key, items).await.trace("creando orden")
     }
 }
 ```
@@ -155,7 +165,8 @@ Para integrar un nuevo dominio seguiré esta receta comprobable (omitiendo los d
 - [ ] Definir el modelo, su alias `*Id` e invariantes en `service/src/models/<singular>.rs` y reexportarlo en `service/src/models/mod.rs`.
 - [ ] Implementar `<Singular>Store` o `<Singular>Repository` (`new()` sobre `Mongo::get` sin DI, `col` privado e `init_indexes(&self)`) en `service/src/stores/<plural>.rs` y reexportarlo en `service/src/stores/mod.rs`.
 - [ ] Implementar `<Singular>Service::new(...)` por DI en `service/src/services/<plural>.rs`, ensamblarlo e inicializar sus índices en `service/src/bootstrap.rs` (`AppContext` + `engine::provide!`).
-- [ ] Crear `service/src/http/<plural>.rs` con `*Request`, `engine::respond!`, handlers sobre `State<*Service>` y `pub fn routes() -> Router<AppContext>`, anidándolo en `service/src/routes.rs`.
+- [ ] Crear `service/src/http/<plural>.rs` (o `http/<plural>/{mod,handlers,dtos}.rs` si el dominio agrupa varios sub-flujos) con `*Request`, `engine::respond!`, handlers sobre `State<*Service>` y `pub fn routes() -> Router<AppContext>`, anidándolo en `service/src/routes.rs`.
+- [ ] Comprobar que cada handler convierte su `*Request` a primitivas o modelos antes de invocar al servicio y que ningún tipo de `http/` aparece en las firmas de `services/`, `stores/` o `models/`.
 - [ ] Ejecutar las 4 compuertas de verificación del workspace antes de dar por concluido el cambio.
 
 ## 3. Contratos HTTP, Errores y Persistencia
@@ -173,6 +184,7 @@ sequenceDiagram
     alt Formato inválido
         H-->>C: 400 INVALID_INPUT + details por campo
     else Formato válido
+        H->>H: Convertir *Request a primitivas / modelos (constructores con invariantes)
         H->>S: Invocar método principal (&ctx, modelos / primitivos)
         S->>D: Llamar operación cerrada (parámetros / filtros tipados)
         D->>D: Construir doc! / proyección / agregación internamente
@@ -186,6 +198,31 @@ sequenceDiagram
         end
     end
 ```
+
+Mantendré los DTO confinados a `http/` y el núcleo (`services/`, `stores/`, `models/`) hablando únicamente en primitivas y modelos, de modo que un cambio en el contrato HTTP nunca obligue a tocar la lógica de negocio ni la persistencia:
+
+| Capa        | Tipos que recibe y devuelve                                                                       | Tipos que nunca cruzan su frontera                                                                                       |
+| :---------- | :------------------------------------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------- |
+| `http/`     | `*Request` (con `Deserialize` + `Validate`), `*Resource` opcional, modelos y primitivas.          | Ninguno de sus DTO sale hacia `services/`; tampoco importa `stores/` ni `clients/` [audit 11].                           |
+| `services/` | Primitivas, modelos y value objects de `models/`, y los auxiliares tipados que exponga `stores/`. | `*Request` o `*Resource` (importar `crate::http` está bloqueado [audit 8]), `validator` ni structs que repliquen un DTO. |
+| `stores/`   | Modelos, primitivas y sus propios auxiliares tipados (`UserFilter`, `UpdateOutcome<T>`).          | DTO de `http/` [audit 6] y tipos BSON en firmas `pub` [audit 24].                                                        |
+| `models/`   | Primitivas, tipos puros de `engine` y otros modelos.                                              | DTO de `http/` [audit 5], `validator` ni conversiones `From<*Request>`.                                                  |
+
+- Convertiré cada `*Request` dentro del handler, desarmándolo campo por campo hacia argumentos explícitos del servicio o construyendo los modelos con sus constructores validados (`OrderItem::new(...)`), y propagaré con `?` el error de invariantes que devuelvan:
+
+  ```rust
+  let items = req.items.into_iter()
+      .map(|item| OrderItem::new(item.name, item.quantity, item.unit_price))
+      .collect::<AppResult<Vec<_>>>()?;
+  checkout.execute(&ctx, req.user_id, req.idempotency_key, items).await
+  ```
+
+- No crearé un modelo o struct de entrada por cada DTO: pasaré primitivas y modelos como argumentos explícitos del método del servicio, que es el caso común.
+- Solo crearé en `models/` un struct que agrupe datos de entrada cuando sea estrictamente necesario, es decir, cuando se cumpla al menos una de estas condiciones:
+  - El método superaría 7 argumentos contando `&self` y `ctx` (límite por defecto de `clippy::too_many_arguments`, que no silenciaré [audit 15]).
+  - El mismo grupo de datos viaja junto por varias operaciones o capas (por ejemplo, de `services/` a `stores/` en más de un método).
+  - El grupo tiene invariantes propias que deben validarse en conjunto, caso en el que será un modelo con constructor `new(...) -> AppResult<Self>`.
+- Nombraré ese struct por el concepto de negocio que representa (`OrderDraft`, `ShippingAddress`) y nunca por el endpoint ni con sufijos `*Request`, `*Dto` o `*Input`; no derivará `Validate`, solo derivará `Deserialize` si se persiste dentro de otro modelo y su construcción a partir del DTO vivirá en el handler, no en `models/`. Esta regla no aplica a `<Nombre>ServiceDeps`, que agrupa colaboradores del constructor y no datos de entrada.
 
 - Respetaré el sobre uniforme gobernado por `engine` en JSON y MessagePack: `{ trace_id, data }` en respuestas con carga (incluyendo paginados `{ items, total }` al retornar `QueryResult<T>`), `{ trace_id }` en respuestas sin carga distintas de `204`/`304` (`Status::code(202)`), cuerpo vacío en `204 No Content` / `304 Not Modified`, `FileResponse` para descargas binarias directas con `x-trace-id`, y `{ trace_id, code, cause, details? }` en errores. Cuando necesite conservar los bytes crudos exactos del request junto al DTO validado emplearé `ValidatedBodyWithRaw<T>`.
 - Mantendré la higiene de errores en dos capas dentro de `AppError`: expondré en `cause` y `details` únicamente mensajes seguros y accionables para el cliente, encapsulando cualquier error crudo de drivers, consultas o proveedores en `.with_internal(...)` o en constructores `internal`/`database`/`censored`. Usaré `AppError::status(code, msg)` para códigos HTTP puntuales (`429`, `503`...) y consultaré `err.log_now()` o `err.trace_report()` cuando requiera diagnóstico manual sin duplicar logs en la frontera HTTP.
