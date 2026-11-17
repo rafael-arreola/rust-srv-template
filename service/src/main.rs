@@ -9,7 +9,7 @@ pub mod stores;
 
 use std::process::ExitCode;
 
-use engine::{AppResult, Envs, Http, Mongo, Redis, ServerLauncher, Telemetry};
+use engine::{AppResult, Envs, Http, Mongo, ServerLauncher, Telemetry};
 use envs::Env;
 
 #[tokio::main]
@@ -29,9 +29,6 @@ async fn run() -> AppResult<()> {
     tracing::info!("Starting {} (env: {})", env.service_name, env.service_env);
 
     Mongo::new(&env.mongo_url, &env.mongo_db, Mongo::DEFAULT).await?;
-    // if let Some(redis_url) = &env.redis_url {
-    //     Redis::new(redis_url, &env.redis_prefix, Redis::DEFAULT).await?;
-    // }
     Http::new(&env.service_name, Http::DEFAULT)?;
 
     let state = bootstrap::AppContext::init().await?;

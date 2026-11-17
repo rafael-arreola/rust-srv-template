@@ -25,8 +25,6 @@ pub struct Env {
     // Conexiones primarias
     pub mongo_url: String,
     pub mongo_db: String,
-    // pub redis_url: Option<String>,
-    // pub redis_prefix: String,
 
     // Integraciones secundarias (opcionales)
     pub carrier_url: Option<String>,
@@ -50,11 +48,8 @@ impl fmt::Debug for Env {
 
 impl FromEnv for Env {
     fn from_env() -> Result<Self, ConfigError> {
-        let service_name: String = env::required("SERVICE_NAME")?;
-        let default_prefix = service_name.clone();
-
         Ok(Self {
-            service_name,
+            service_name: env::required("SERVICE_NAME")?,
             service_env: env::or("SERVICE_ENV", "DEV".to_string())?,
             project_id: env::or("PROJECT_ID", String::new())?,
             debug_level: env::or("DEBUG_LEVEL", "info".to_string())?,
@@ -68,8 +63,6 @@ impl FromEnv for Env {
 
             mongo_url: env::required("MONGO_URL")?,
             mongo_db: env::required("MONGO_DB")?,
-            // redis_url: env::optional("REDIS_URL")?,
-            // redis_prefix: env::or("REDIS_PREFIX", default_prefix)?,
             carrier_url: env::optional("CARRIER_URL")?,
             carrier_api_key: env::optional("CARRIER_API_KEY")?,
         })
